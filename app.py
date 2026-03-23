@@ -142,7 +142,32 @@ def check_password():
     return False
 
 
+def check_api_key():
+    if st.session_state.get("google_api_key"):
+        return True
+
+    st.title("Veo 3.1 Media Generator")
+    st.subheader("Enter your Google API key")
+    st.caption("Your key is used only for this session and is never stored.")
+
+    with st.form("api_key_form"):
+        api_key = st.text_input("Google API key", type="password", placeholder="AIza...")
+        submitted = st.form_submit_button("Continue", use_container_width=True)
+
+    if submitted:
+        if api_key.strip():
+            st.session_state["google_api_key"] = api_key.strip()
+            st.rerun()
+        else:
+            st.error("Please enter a valid API key.")
+
+    return False
+
+
 if not check_password():
+    st.stop()
+
+if not check_api_key():
     st.stop()
 
 # ── Sidebar ──────────────────────────────────────────────────────────────────
@@ -153,15 +178,21 @@ with st.sidebar:
         st.session_state.clear()
         st.rerun()
 
+    if st.button("Change API key", use_container_width=True):
+        st.session_state.pop("google_api_key", None)
+        st.rerun()
+
+    key_preview = st.session_state.get("google_api_key", "")
+    st.caption(f"API key: `{key_preview[:8]}...`" if key_preview else "No API key set")
+
     if st.session_state.get("cost") is not None:
         st.metric("Session Cost", f"${st.session_state['cost']:.4f}")
 
-# ── Google client (cached) ───────────────────────────────────────────────────
+# ── Google client (session-scoped) ───────────────────────────────────────────
 
 
-@st.cache_resource
 def get_client():
-    return genai.Client(api_key=st.secrets["GOOGLE_API_KEY"])
+    return genai.Client(api_key=st.session_state["google_api_key"])
 
 
 # ── Generation functions ─────────────────────────────────────────────────────
