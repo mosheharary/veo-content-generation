@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "veo"
+version = "0.1.0"
+description = "Veo 3.1 Video Generation CLI and Web UI"
+authors = ["Your Name <your.email@example.com>"]
+readme = "README.md"
+packages = [
+    { include = "veo.py" },
+    { include = "app.py" }
+]
+
+[tool.poetry.dependencies]
+python = ">=3.10"
+google-genai = ">=1.52.0"
+python-dotenv = ">=1.0.0"
+streamlit = ">=1.32.0"
+opencv-python-headless = ">=4.13.0.92"
+Pillow = ">=10.0.0"
+
+[tool.poetry.scripts]
+veo = "veo:main"
+veo-ui = "run:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
