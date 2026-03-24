@@ -990,8 +990,82 @@ def _draw_speech_bubble(draw, panel_rect, text, font, bubble_type="speech"):
         y_t += lh + LINE_GAP
 
 
-def compose_comics_pages(image_paths, dialog_data, output_dir):
-    """Compose storyboard images into professional-layout comics page(s)."""
+def _draw_speech_bubble_corner(draw, panel_rect, text, font, bubble_type="speech"):
+    """Draw a small speech bubble anchored to the bottom-left corner of a panel.
+
+    Keeps the bubble away from the centre of the image so it is unlikely to
+    cover the main characters.  The bubble is intentionally compact (max 45 %
+    of the panel width) and placed in the lower-left quadrant.
+    """
+    import math
+    px, py, px2, py2 = panel_rect
+    pw = px2 - px
+    ph = py2 - py
+    PAD_H, PAD_V = 12, 8
+    LINE_GAP = 3
+    WHITE = (255, 255, 255)
+    BLACK = (0, 0, 0)
+
+    max_bubble_w = int(pw * 0.45)
+    lines, widths, heights = _wrap_text(draw, text.upper(), font, max_bubble_w - PAD_H * 2)
+    if not lines:
+        return
+
+    text_w = max(widths)
+    text_h = sum(heights) + LINE_GAP * (len(lines) - 1)
+    bw = text_w + PAD_H * 2
+    bh = text_h + PAD_V * 2
+
+    # Anchor: bottom-left, with a small inset so it sits inside the panel
+    INSET = 10
+    bx = px + INSET
+    by = py2 - bh - INSET - 28  # leave room for tail below
+
+    radius = min(bh // 2, bw // 4, 20)
+
+    if bubble_type == "shout":
+        cx = bx + bw // 2
+        cy = by + bh // 2
+        outer_r = max(bw, bh) // 2 + 14
+        inner_r = max(bw, bh) // 2 - 4
+        n_spikes = 14
+        pts = []
+        for i in range(n_spikes * 2):
+            angle = 2 * math.pi * i / (n_spikes * 2) - math.pi / 2
+            r = outer_r if i % 2 == 0 else inner_r
+            pts.append((int(cx + r * math.cos(angle)), int(cy + r * math.sin(angle))))
+        draw.polygon(pts, fill=WHITE, outline=BLACK)
+    else:
+        # Small tail pointing downward-left toward the speaker area
+        TAIL_W = 10
+        TAIL_H = 22
+        tail_cx = bx + bw // 3
+        tail_base_y = by + bh
+        tail_tip_x = tail_cx - 6
+        tail_tip_y = min(tail_base_y + TAIL_H, py2 - INSET)
+        tail_pts = [(tail_cx - TAIL_W, tail_base_y), (tail_cx + TAIL_W, tail_base_y), (tail_tip_x, tail_tip_y)]
+        draw.polygon(tail_pts, fill=WHITE, outline=BLACK)
+
+        border_w = 2 if bubble_type == "whisper" else 2
+        draw.rounded_rectangle([bx, by, bx + bw, by + bh], radius=radius,
+                               fill=WHITE, outline=BLACK, width=border_w)
+
+    # Text
+    y_t = by + PAD_V
+    for line, lw, lh in zip(lines, widths, heights):
+        x_t = bx + PAD_H + (text_w - lw) // 2
+        draw.text((x_t, y_t), line, fill=BLACK, font=font)
+        y_t += lh + LINE_GAP
+
+
+def compose_comics_pages(image_paths, dialog_data, output_dir, style=None):
+    """Compose storyboard images into professional-layout comics page(s).
+
+    If *style* is ``"comics"`` the generated panel art already contains
+    speech-bubbles baked in by the image model, so no overlay is added.
+    For every other style small corner-positioned bubbles are overlaid so
+    that they don't obscure the main characters.
+    """
     from PIL import Image, ImageDraw
 
     # Standard US comic page portrait ratio ~1:1.55
@@ -1031,14 +1105,19 @@ def compose_comics_pages(image_paths, dialog_data, output_dir):
             img = img.crop((cx, cy, cx + pw, cy + ph))
             page.paste(img, (px, py))
 
-            # Overlay dialog or caption ON TOP of the image
+            # Overlay dialog or caption ON TOP of the image.
+            # Comics style: the AI already rendered speech bubbles inside the
+            # panel art — adding a second layer would double them up, so skip.
+            # All other styles: draw a small corner bubble that avoids the
+            # main characters (placed bottom-left, max 45 % of panel width).
             panel_data = dialog_data[panel_idx] if panel_idx < len(dialog_data) else {}
-            if panel_data.get("has_characters") and panel_data.get("dialog"):
-                text = panel_data["dialog"]
-                btype = panel_data.get("bubble_type", "speech")
-                _draw_speech_bubble(draw, (px, py, px2, py2), text, font_dialog, btype)
-            elif panel_data.get("caption"):
-                _draw_caption_box(draw, (px, py, px2, py2), panel_data["caption"], font_caption)
+            if style != "comics":
+                if panel_data.get("has_characters") and panel_data.get("dialog"):
+                    text = panel_data["dialog"]
+                    btype = panel_data.get("bubble_type", "speech")
+                    _draw_speech_bubble_corner(draw, (px, py, px2, py2), text, font_dialog, btype)
+                elif panel_data.get("caption"):
+                    _draw_caption_box(draw, (px, py, px2, py2), panel_data["caption"], font_caption)
 
         out_path = output_dir / f"comics_page_{page_num}.png"
         page.save(out_path)
@@ -1087,6 +1166,17 @@ def poll_operation(client, operation, max_wait):
 
     # Check for errors in the completed operation
     if getattr(operation, "error", None):
+        print(f"\n[DEBUG] Operation error details:")
+        print(f"   error        : {operation.error}")
+        print(f"   error type   : {type(operation.error)}")
+        try:
+            print(f"   error dict   : {dict(operation.error)}")
+        except Exception:
+            pass
+        print(f"   operation.name : {getattr(operation, 'name', 'N/A')}")
+        print(f"   operation.done : {getattr(operation, 'done', 'N/A')}")
+        print(f"   operation.metadata : {getattr(operation, 'metadata', 'N/A')}")
+        print(f"   operation (full) : {operation}")
         raise RuntimeError(f"Operation failed: {operation.error}")
 
     response = getattr(operation, "response", None)
@@ -1133,6 +1223,13 @@ def generate_video(client, prompt, resolution, aspect_ratio, reference_image_pat
         )
 
     generate_kwargs = {"model": VEO_MODEL, "prompt": video_prompt, "config": config}
+
+    print(f"\n[DEBUG] generate_videos kwargs:")
+    print(f"   model        : {VEO_MODEL}")
+    print(f"   duration     : {duration}s")
+    print(f"   resolution   : {resolution}")
+    print(f"   aspect_ratio : {aspect_ratio}")
+    print(f"   prompt (first 200 chars): {video_prompt[:200]!r}")
 
     if reference_image_path:
         mime_type = "image/png" if str(reference_image_path).lower().endswith(".png") else "image/jpeg"
@@ -1457,7 +1554,7 @@ def cmd_generate(client, args):
             print(f"\nGenerating comics dialog...")
             dialog_data = generate_comics_dialog(client, all_prompt_jsons, cost_tracker=cost)
             print(f"\nComposing comics page(s)...")
-            compose_comics_pages(all_image_paths, dialog_data, output_dir)
+            compose_comics_pages(all_image_paths, dialog_data, output_dir, style=args.style)
 
         # Render images into a self-contained HTML file
         if args.html and len(all_image_paths) > 0:

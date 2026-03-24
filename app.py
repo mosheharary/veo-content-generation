@@ -5,6 +5,8 @@ import shutil
 from pathlib import Path
 
 import streamlit as st
+import db
+import cloudinary_utils
 from google import genai
 from google.genai import types
 
@@ -121,25 +123,61 @@ st.set_page_config(
 # ── Authentication ───────────────────────────────────────────────────────────
 
 
-def check_password():
+
+def login_ui():
     if st.session_state.get("authenticated", False):
         return True
 
     st.title("Veo 3.1 Media Generator")
-    st.subheader("Sign in")
+    
+    tab1, tab2 = st.tabs(["Login", "Sign Up"])
+    
+    with tab1:
+        st.subheader("Sign in")
+        with st.form("login_form"):
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            submitted = st.form_submit_button("Sign in", width='stretch')
+            
+            if submitted:
+                db_session = db.get_session()
+                try:
+                    user = db.get_user_by_username(db_session, username)
+                    if user and db.verify_password(password, user.password_hash):
+                        st.session_state["authenticated"] = True
+                        st.session_state["user_id"] = user.id
+                        st.session_state["username"] = user.username
+                        st.rerun()
+                    else:
+                        st.error("Incorrect username or password")
+                finally:
+                    db_session.close()
 
-    with st.form("login_form"):
-        password = st.text_input("Password", type="password")
-        submitted = st.form_submit_button("Sign in", use_container_width=True)
-
-    if submitted:
-        if password == st.secrets["PASSWORD"]:
-            st.session_state["authenticated"] = True
-            st.rerun()
-        else:
-            st.error("Incorrect password")
+    with tab2:
+        st.subheader("Create Account")
+        with st.form("signup_form"):
+            new_username = st.text_input("Choose Username")
+            new_password = st.text_input("Choose Password", type="password")
+            new_submitted = st.form_submit_button("Sign Up", width='stretch')
+            
+            if new_submitted:
+                if len(new_username) < 3 or len(new_password) < 6:
+                    st.error("Username must be at least 3 characters and password 6 characters.")
+                else:
+                    db_session = db.get_session()
+                    try:
+                        existing = db.get_user_by_username(db_session, new_username)
+                        if existing:
+                            st.error("Username already taken.")
+                        else:
+                            user = db.create_user(db_session, new_username, new_password)
+                            st.success("Account created! You can now log in.")
+                    finally:
+                        db_session.close()
 
     return False
+
+
 
 
 def check_api_key():
@@ -152,7 +190,7 @@ def check_api_key():
 
     with st.form("api_key_form"):
         api_key = st.text_input("Google API key", type="password", placeholder="AIza...")
-        submitted = st.form_submit_button("Continue", use_container_width=True)
+        submitted = st.form_submit_button("Continue", width='stretch')
 
     if submitted:
         if api_key.strip():
@@ -164,21 +202,54 @@ def check_api_key():
     return False
 
 
-if not check_password():
+if not login_ui():
     st.stop()
+
 
 if not check_api_key():
     st.stop()
+
+# --- Main Navigation ---
+nav_choice = st.sidebar.radio("Navigation", ["Generator", "History"])
+
+if nav_choice == "History":
+    st.title("My Generation History")
+    
+    db_session = db.get_session()
+    try:
+        user_id = st.session_state.get("user_id")
+        if user_id:
+            from db import Session, Generation
+            sessions = db_session.query(Session).filter(Session.user_id == user_id).order_by(Session.created_at.desc()).all()
+            if not sessions:
+                st.info("You haven't generated anything yet.")
+            
+            for s in sessions:
+                with st.expander(f"{s.session_name} - {s.created_at.strftime('%Y-%m-%d %H:%M')}"):
+                    st.write(f"**Total Cost:** ${s.total_cost:.4f}")
+                    for gen in s.generations:
+                        st.markdown(f"**Prompt:** {gen.prompt}")
+                        if gen.media_url:
+                            if gen.gen_type == 'video':
+                                st.video(gen.media_url)
+                            else:
+                                st.image(gen.media_url)
+                        st.divider()
+    finally:
+        db_session.close()
+    
+    st.stop()
+
 
 # ── Sidebar ──────────────────────────────────────────────────────────────────
 
 with st.sidebar:
     st.header("Session")
-    if st.button("Logout", use_container_width=True):
+    if st.button("Logout", width='stretch'):
         st.session_state.clear()
         st.rerun()
 
-    if st.button("Change API key", use_container_width=True):
+    if st.button("Change API key", width='stretch'):
         st.session_state.pop("google_api_key", None)
         st.rerun()
 
@@ -260,7 +331,16 @@ def generate_video_streamlit(
             raise TimeoutError("Timed out after 12 minutes")
 
         time.sleep(POLL_INTERVAL)
-        operation = client.operations.get(operation)
+        for _attempt in range(5):
+            try:
+                operation = client.operations.get(operation)
+                break
+            except OSError as _net_err:
+                status_widget.write(f"⚠️ Network blip polling status ({_net_err}), retrying in 10s…")
+                print(f"[WARN] poll retry {_attempt + 1}/5: {_net_err}")
+                time.sleep(10)
+        else:
+            raise RuntimeError("Lost network connectivity while polling — operation may still be running on the server")
 
     if getattr(operation, "error", None):
         raise RuntimeError(f"Operation failed: {operation.error}")
@@ -279,7 +359,16 @@ def generate_video_streamlit(
     cost_tracker.add_video(duration, resolution)
 
     status_widget.write("Downloading video...")
-    client.files.download(file=video_file)
+    for _attempt in range(5):
+        try:
+            client.files.download(file=video_file)
+            break
+        except OSError as _net_err:
+            status_widget.write(f"⚠️ Download blip ({_net_err}), retrying in 10s…")
+            print(f"[WARN] download retry {_attempt + 1}/5: {_net_err}")
+            time.sleep(10)
+    else:
+        raise RuntimeError("Failed to download video after 5 attempts — check your network")
 
     return video_file
 
@@ -464,7 +553,7 @@ generate_clicked = st.button(
     "Generate",
     type="primary",
     disabled=not prompt.strip(),
-    use_container_width=True,
+    width='stretch',
 )
 
 # ── Comics pre-generation approval ───────────────────────────────────────────
@@ -482,12 +571,12 @@ if st.session_state.get("comics_confirm_pending") is not None:
     )
     _col_yes, _col_no = st.columns(2)
     with _col_yes:
-        if st.button(f"✅ Confirm — generate {_total} images", type="primary", use_container_width=True):
+        if st.button(f"✅ Confirm — generate {_total} images", type="primary", width='stretch'):
             st.session_state.pop("comics_confirm_pending")
             st.session_state["comics_do_generate"] = True
             st.rerun()
     with _col_no:
-        if st.button("✖ Cancel", use_container_width=True):
+        if st.button("✖ Cancel", width='stretch'):
             st.session_state.pop("comics_confirm_pending", None)
             st.rerun()
 
@@ -557,6 +646,52 @@ if _do_generate:
                 status.update(label="Done!", state="complete")
 
                 st.session_state["video_bytes"] = final_video_path.read_bytes()
+
+                try:
+                    # Calculate cost
+                    total_cost = cost_tracker.total() if hasattr(cost_tracker, 'total') else 0.0
+                    st.session_state["cost"] = st.session_state.get("cost", 0.0) + total_cost
+
+                    # Upload to Cloudinary
+                    import cloudinary_utils
+                    cloud_url = cloudinary_utils.upload_file_to_cloudinary(final_video_path, resource_type="video")
+
+                    # Save to DB
+                    import db
+                    db_session = db.get_session()
+                    try:
+                        user_id = st.session_state.get("user_id")
+                        if user_id:
+                            # Find or create a session for today
+                            from datetime import datetime
+                            session_name = f"Video Gen - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                            new_session = db.Session(user_id=user_id, session_name=session_name, total_cost=total_cost)
+                            db_session.add(new_session)
+                            db_session.flush()
+
+                            metadata = {
+                                "prompts": st.session_state.get("generated_prompts", []),
+                                "resolution": resolution,
+                                "aspect_ratio": aspect_ratio,
+                                "total_images": 1
+                            }
+
+                            new_gen = db.Generation(
+                                session_id=new_session.id,
+                                gen_type='video',
+                                prompt=st.session_state.get("last_prompt", ""),
+                                metadata_json=metadata,
+                                media_url=cloud_url
+                            )
+                            db_session.add(new_gen)
+                            db_session.commit()
+                    except Exception as e:
+                        print(f"Error saving to DB: {e}")
+                    finally:
+                        db_session.close()
+                except Exception as e:
+                    print(f"Error in upload/save: {e}")
+
 
             else:  # Image Only
                 if style_val == "all":
@@ -650,7 +785,7 @@ if _do_generate:
                         status.write("Generating comics dialog...")
                         dialog_data = generate_comics_dialog(client, generated_prompts, cost_tracker=cost_tracker)
                         status.write("Composing comics pages...")
-                        comic_pages = compose_comics_pages(all_image_paths, dialog_data, out_dir)
+                        comic_pages = compose_comics_pages(all_image_paths, dialog_data, out_dir, style=style_val)
                         comics_data = [
                             {"name": p.name, "bytes": p.read_bytes(), "ext": p.suffix}
                             for p in comic_pages
@@ -665,9 +800,78 @@ if _do_generate:
                     ]
                     st.session_state["images"] = images_data
 
+
         st.session_state["cost"] = cost_tracker.total()
         st.session_state["last_prompt"] = prompt
         st.session_state["generated_prompts"] = generated_prompts
+        
+        # Save image and comic generations to Cloudinary and Neon
+        if mode == "Image Only" or _is_comics:
+            try:
+                import cloudinary_utils
+                import db
+                db_session = db.get_session()
+                
+                image_urls = []
+                for i_data in st.session_state.get("images", []):
+                    import tempfile
+                    import os
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                        tmp.write(i_data["bytes"])
+                        tmp_path = tmp.name
+                        
+                    cloud_url = cloudinary_utils.upload_file_to_cloudinary(tmp_path, resource_type="image")
+                    if cloud_url:
+                        image_urls.append(cloud_url)
+                        
+                    os.unlink(tmp_path)
+                
+                for i_data in st.session_state.get("comics_images", []):
+                    import tempfile
+                    import os
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                        tmp.write(i_data["bytes"])
+                        tmp_path = tmp.name
+                    cloud_url = cloudinary_utils.upload_file_to_cloudinary(tmp_path, resource_type="image")
+                    if cloud_url:
+                        image_urls.append(cloud_url)
+                    os.unlink(tmp_path)
+                
+                try:
+                    user_id = st.session_state.get("user_id")
+                    if user_id and image_urls:
+                        total_cost = st.session_state["cost"]
+                        
+                        from datetime import datetime
+                        session_name = f"{'Comics' if _is_comics else 'Image'} Gen - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                        new_session = db.Session(user_id=user_id, session_name=session_name, total_cost=total_cost)
+                        db_session.add(new_session)
+                        db_session.flush()
+
+                        metadata = {
+                            "prompts": st.session_state.get("generated_prompts", []),
+                            "resolution": "16:9", # Default for images
+                            "aspect_ratio": "16:9", # Default for images
+                            "total_images": total_images
+                        }
+
+                        new_gen = db.Generation(
+                            session_id=new_session.id,
+                            gen_type='comics' if _is_comics else 'image',
+                            prompt=st.session_state.get("last_prompt", ""),
+                            metadata_json=metadata,
+                            media_url=image_urls[0] if image_urls else None
+                        )
+                        db_session.add(new_gen)
+                        db_session.commit()
+                except Exception as e:
+                    print(f"Error saving to DB: {e}")
+                finally:
+                    db_session.close()
+                    
+            except Exception as e:
+                print(f"Error in image upload/save: {e}")
+
 
     except Exception as exc:
         st.error(f"Generation failed: {exc}")
@@ -685,7 +889,7 @@ if st.session_state.get("video_bytes") or st.session_state.get("images"):
     with col_result:
         st.subheader("Result")
     with col_clear:
-        if st.button("🗑️ Clear", use_container_width=True):
+        if st.button("🗑️ Clear", width='stretch'):
             for key in ["video_bytes", "images", "comics_images", "last_prompt", "generated_prompts", "cost"]:
                 st.session_state.pop(key, None)
             st.rerun()
@@ -702,7 +906,7 @@ if st.session_state.get("video_bytes") or st.session_state.get("images"):
                 data=st.session_state["video_bytes"],
                 file_name="veo_video.mp4",
                 mime="video/mp4",
-                use_container_width=True,
+                width='stretch',
             )
         with col_c:
             share_button(
@@ -714,7 +918,7 @@ if st.session_state.get("video_bytes") or st.session_state.get("images"):
     if st.session_state.get("comics_images"):
         st.subheader("Comics Pages")
         for img in st.session_state["comics_images"]:
-            st.image(img["bytes"], caption=img["name"], use_container_width=True)
+            st.image(img["bytes"], caption=img["name"], width='stretch')
             col_d, col_s = st.columns(2)
             with col_d:
                 st.download_button(
@@ -723,7 +927,7 @@ if st.session_state.get("video_bytes") or st.session_state.get("images"):
                     file_name=img["name"],
                     mime=f"image/{img['ext'].strip('.')}",
                     key=f"dl_comic_{img['name']}",
-                    use_container_width=True,
+                    width='stretch',
                 )
             with col_s:
                 share_button(
@@ -741,7 +945,7 @@ if st.session_state.get("video_bytes") or st.session_state.get("images"):
         cols = st.columns(3)
         for i, img in enumerate(images):
             with cols[i % 3]:
-                st.image(img["bytes"], caption=img["name"], use_container_width=True)
+                st.image(img["bytes"], caption=img["name"], width='stretch')
                 col_d, col_s = st.columns(2)
                 with col_d:
                     st.download_button(
@@ -754,7 +958,7 @@ if st.session_state.get("video_bytes") or st.session_state.get("images"):
                         ),
                         mime=f"image/{img['ext'].strip('.')}",
                         key=f"dl_img_{i}_{img['name']}",
-                        use_container_width=True,
+                        width='stretch',
                     )
                 with col_s:
                     share_button(
