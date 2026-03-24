@@ -495,6 +495,36 @@ def generate_image_prompt_json(client, idea, cost_tracker=None, style=None):
     return response.text.strip()
 
 
+def generate_video_prompt(client, idea, cost_tracker=None, style=None):
+    """Use TEXT_MODEL to generate an enriched cinematic video prompt from a general idea."""
+    style_def = STYLE_DEFINITIONS.get(style, {}) if style else {}
+    style_note = style_def.get("init_note", "")
+
+    request = (
+        f'Given this general idea: "{idea}"\n'
+        f"{style_note}"
+        "Generate a detailed cinematic VIDEO prompt for a video generation model.\n"
+        "Write a flowing, descriptive paragraph (not JSON, not bullet points) that covers:\n"
+        "  - Subject & scene: who or what is in the scene and the environment\n"
+        "  - Motion & action: what moves, how it moves, physical actions unfolding\n"
+        "  - Camera work: movement (pan, tilt, dolly, zoom, crane, handheld, static), angle, lens\n"
+        "  - Temporal flow: how the scene evolves from start to finish over a few seconds\n"
+        "  - Lighting & atmosphere: quality and direction of light, mood, color palette\n"
+        "  - Audio/sound design: ambient sounds, music tone, notable audio elements\n"
+        "  - Visual quality: cinematic look, color grading, film format (e.g. 35mm, IMAX)\n"
+        "Be vivid, specific, and cinematic. Do not include meta-commentary or instructions.\n"
+        "Return ONLY the prompt text, nothing else."
+    )
+    response = client.models.generate_content(model=TEXT_MODEL, contents=request)
+    if cost_tracker and response.usage_metadata:
+        cost_tracker.add_text(
+            input_tokens=response.usage_metadata.prompt_token_count or 0,
+            output_tokens=response.usage_metadata.candidates_token_count or 0,
+            label="Video prompt generation",
+        )
+    return response.text.strip()
+
+
 def generate_continuation_prompt_json(client, previous_prompt_json, cost_tracker=None, style=None):
     """Use TEXT_MODEL to generate the next storyboard frame prompt, continuing from the previous JSON prompt."""
     style_def = STYLE_DEFINITIONS.get(style, {}) if style else {}

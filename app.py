@@ -14,6 +14,37 @@ import base64
 import uuid
 import streamlit.components.v1 as components
 
+class TraceCollector:
+    """Accumulates generation step traces in memory; bulk-inserts them to DB after commit."""
+
+    def __init__(self):
+        self._traces: list[dict] = []
+        self._start = time.time()
+        self._counter = 0
+
+    def add(self, step_name: str, status: str, message: str = "", metadata: dict | None = None):
+        self._counter += 1
+        self._traces.append({
+            "step_number":   self._counter,
+            "step_name":     step_name,
+            "status":        status,
+            "message":       message,
+            "metadata_json": metadata or {},
+            "elapsed_sec":   round(time.time() - self._start, 2),
+        })
+        print(f"[TRACE] {step_name} - {status} ({message}) | metadata: {metadata or {}}")
+
+    def flush(self, db_session, generation_id: str):
+        """Bulk-insert all accumulated traces linked to generation_id."""
+        for t in self._traces:
+            db_session.add(db.GenerationTrace(generation_id=generation_id, **t))
+        try:
+            db_session.commit()
+        except Exception as e:
+            print(f"Error saving traces to DB: {e}")
+        self._traces.clear()
+
+
 def share_button(file_bytes, file_name, mime_type, button_text="Share"):
     b64_data = base64.b64encode(file_bytes).decode('utf-8')
     btn_id = "shareBtn_" + str(uuid.uuid4()).replace("-", "")
@@ -102,6 +133,7 @@ from veo import (
     VEO_PRICE_PER_SEC,
     generate_extension_prompts,
     generate_image_prompt_json,
+    generate_video_prompt,
     generate_image_from_reference,
     generate_image_from_text,
     generate_continuation_prompt_json,
@@ -497,7 +529,7 @@ if mode == "Video":
         help="Number of segments to append.",
     )
 
-    col4, col5 = st.columns(2)
+    col4, col5, col6 = st.columns(3)
     extend_method = col4.selectbox(
         "Extend Method",
         ["image", "video"],
@@ -509,6 +541,13 @@ if mode == "Video":
         value=False,
         help="Pass reference image directly to Veo without restyling it first.",
     )
+    video_style_options = ["None"] + list(STYLE_DEFINITIONS.keys())
+    video_style = col6.selectbox(
+        "Style",
+        video_style_options,
+        help="Apply a visual style to the video via AI prompt enhancement.",
+    )
+    video_style_val = None if video_style == "None" else video_style
 
     # Extensions force 720p if video method
     effective_resolution = (
@@ -587,6 +626,7 @@ _do_generate = (generate_clicked and not _is_comics) or st.session_state.pop("co
 if _do_generate:
     client = get_client()
     cost_tracker = CostTracker()
+    tracer = TraceCollector()
 
     # Clean previous state
     generated_prompts = []
@@ -605,29 +645,67 @@ if _do_generate:
 
         with st.status("Generating...", expanded=True) as status:
             if mode == "Video":
+                tracer.add("generation_start", "started", metadata={
+                    "mode": "video",
+                    "prompt": prompt,
+                    "resolution": effective_resolution,
+                    "aspect_ratio": aspect_ratio,
+                    "num_extensions": num_extensions,
+                    "extend_method": extend_method,
+                    "style": video_style_val,
+                    "has_reference_image": tmp_image_path is not None,
+                    "direct_image": direct_image,
+                })
+
                 ref_image_to_use = tmp_image_path
                 if tmp_image_path and not direct_image:
+                    tracer.add("style_reference_image", "started")
                     status.write("Generating styled image from reference...")
                     ref_image_to_use = generate_image_from_reference(
                         client, prompt, tmp_image_path, out_dir, cost_tracker=cost_tracker
                     )
+                    tracer.add("style_reference_image", "completed",
+                               metadata={"output_path": str(ref_image_to_use)})
 
+                tracer.add("enhance_prompt", "started")
+                status.write("Enhancing video prompt...")
+                enhanced_prompt = generate_video_prompt(
+                    client, prompt, cost_tracker=cost_tracker, style=video_style_val
+                )
+                tracer.add("enhance_prompt", "completed",
+                           message=enhanced_prompt[:300],
+                           metadata={"enhanced_prompt": enhanced_prompt})
+
+                tracer.add("generate_initial_video", "started", metadata={
+                    "resolution": effective_resolution,
+                    "aspect_ratio": aspect_ratio,
+                })
                 video_file = generate_video_streamlit(
                     client=client,
-                    prompt=prompt,
+                    prompt=enhanced_prompt,
                     resolution=effective_resolution,
                     aspect_ratio=aspect_ratio,
                     reference_image_path=ref_image_to_use,
                     cost_tracker=cost_tracker,
                     status_widget=status,
                 )
+                tracer.add("generate_initial_video", "completed")
+
+                generated_prompts.append(enhanced_prompt)
 
                 if num_extensions > 0:
+                    tracer.add("generate_extension_prompts", "started",
+                               metadata={"num_extensions": num_extensions})
                     status.write(f"Generating {num_extensions} extension prompt(s)...")
                     ext_prompts = generate_extension_prompts(
-                        client, prompt, num_extensions, cost_tracker=cost_tracker
+                        client, enhanced_prompt, num_extensions, cost_tracker=cost_tracker
                     )
+                    tracer.add("generate_extension_prompts", "completed",
+                               metadata={"prompts": ext_prompts})
                     generated_prompts.extend(ext_prompts)
+                    for _i, _ep in enumerate(ext_prompts):
+                        tracer.add(f"extend_video_{_i + 1}", "started",
+                                   metadata={"prompt": _ep, "method": extend_method})
                     final_video_path = extend_video_streamlit(
                         client,
                         video_file,
@@ -639,6 +717,8 @@ if _do_generate:
                         cost_tracker,
                         status,
                     )
+                    for _i in range(len(ext_prompts)):
+                        tracer.add(f"extend_video_{_i + 1}", "completed")
                 else:
                     final_video_path = out_dir / "video_final.mp4"
                     video_file.save(str(final_video_path))
@@ -653,8 +733,10 @@ if _do_generate:
                     st.session_state["cost"] = st.session_state.get("cost", 0.0) + total_cost
 
                     # Upload to Cloudinary
+                    tracer.add("upload_cloudinary", "started")
                     import cloudinary_utils
                     cloud_url = cloudinary_utils.upload_file_to_cloudinary(final_video_path, resource_type="video")
+                    tracer.add("upload_cloudinary", "completed", metadata={"url": cloud_url})
 
                     # Save to DB
                     import db
@@ -662,7 +744,6 @@ if _do_generate:
                     try:
                         user_id = st.session_state.get("user_id")
                         if user_id:
-                            # Find or create a session for today
                             from datetime import datetime
                             session_name = f"Video Gen - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
                             new_session = db.Session(user_id=user_id, session_name=session_name, total_cost=total_cost)
@@ -670,21 +751,28 @@ if _do_generate:
                             db_session.flush()
 
                             metadata = {
-                                "prompts": st.session_state.get("generated_prompts", []),
+                                "prompts": generated_prompts,
                                 "resolution": resolution,
                                 "aspect_ratio": aspect_ratio,
-                                "total_images": 1
+                                "total_images": 1,
+                                "style": video_style_val,
+                                "enhanced_prompt": enhanced_prompt,
                             }
 
                             new_gen = db.Generation(
                                 session_id=new_session.id,
                                 gen_type='video',
-                                prompt=st.session_state.get("last_prompt", ""),
+                                prompt=prompt,
                                 metadata_json=metadata,
                                 media_url=cloud_url
                             )
                             db_session.add(new_gen)
                             db_session.commit()
+                            tracer.add("save_to_db", "completed",
+                                       metadata={"generation_id": new_gen.id, "total_cost": total_cost})
+                            tracer.add("generation_complete", "completed",
+                                       metadata={"total_cost": total_cost})
+                            tracer.flush(db_session, new_gen.id)
                     except Exception as e:
                         print(f"Error saving to DB: {e}")
                     finally:
@@ -694,6 +782,15 @@ if _do_generate:
 
 
             else:  # Image Only
+                tracer.add("generation_start", "started", metadata={
+                    "mode": "image",
+                    "prompt": prompt,
+                    "style": style_val,
+                    "total_images": total_images,
+                    "comics": comics,
+                    "has_reference_image": tmp_image_path is not None,
+                })
+
                 if style_val == "all":
                     status.write(f"Generating images for all {len(STYLE_DEFINITIONS)} styles...")
                     all_style_paths = []
@@ -701,17 +798,22 @@ if _do_generate:
                         s_dir = out_dir / s_name
                         s_dir.mkdir()
                         try:
+                            tracer.add(f"generate_prompt_{s_name}", "started")
                             status.write(f"Generating prompt for {s_name}...")
                             img_json = generate_image_prompt_json(
                                 client, prompt, cost_tracker, style=s_name
                             )
                             generated_prompts.append(img_json)
+                            tracer.add(f"generate_prompt_{s_name}", "completed")
                             if tmp_image_path:
+                                tracer.add(f"generate_image_{s_name}", "started",
+                                           metadata={"with_reference": True})
                                 status.write(f"Generating image for {s_name} (with reference)...")
                                 img_path = generate_image_from_reference(
                                     client, img_json, tmp_image_path, s_dir, cost_tracker
                                 )
                             else:
+                                tracer.add(f"generate_image_{s_name}", "started")
                                 status.write(f"Generating image for {s_name}...")
                                 img_path = generate_image_from_text(
                                     client,
@@ -721,7 +823,10 @@ if _do_generate:
                                     cost_tracker=cost_tracker,
                                 )
                             all_style_paths.append(img_path)
+                            tracer.add(f"generate_image_{s_name}", "completed",
+                                       metadata={"output_path": str(img_path)})
                         except Exception as e:
+                            tracer.add(f"generate_image_{s_name}", "failed", message=str(e))
                             status.write(f"Failed {s_name}: {e}")
 
                     status.update(label="Done!", state="complete")
@@ -735,13 +840,16 @@ if _do_generate:
 
                 else:
                     all_image_paths = []
+                    tracer.add("generate_prompt_1", "started")
                     status.write(f"Generating prompt 1...")
                     prev_json = generate_image_prompt_json(
                         client, prompt, cost_tracker, style=style_val
                     )
                     generated_prompts.append(prev_json)
+                    tracer.add("generate_prompt_1", "completed")
 
                     if tmp_image_path:
+                        tracer.add("generate_image_1", "started", metadata={"with_reference": True})
                         status.write(f"Generating image 1 (with reference)...")
                         prev_image_path = generate_image_from_reference(
                             client, prev_json, tmp_image_path, out_dir, cost_tracker
@@ -750,6 +858,7 @@ if _do_generate:
                         prev_image_path.rename(final_path)
                         prev_image_path = final_path
                     else:
+                        tracer.add("generate_image_1", "started")
                         status.write(f"Generating image 1...")
                         first_filename = "image_1.png" if total_images > 1 else "image.png"
                         prev_image_path = generate_image_from_text(
@@ -759,15 +868,20 @@ if _do_generate:
                             filename=first_filename,
                             cost_tracker=cost_tracker,
                         )
+                    tracer.add("generate_image_1", "completed",
+                               metadata={"output_path": str(prev_image_path)})
 
                     all_image_paths.append(prev_image_path)
 
                     for i in range(2, total_images + 1):
+                        tracer.add(f"generate_prompt_{i}", "started")
                         status.write(f"Generating prompt {i}...")
                         next_json = generate_continuation_prompt_json(
                             client, prev_json, cost_tracker, style=style_val
                         )
                         generated_prompts.append(next_json)
+                        tracer.add(f"generate_prompt_{i}", "completed")
+                        tracer.add(f"generate_image_{i}", "started")
                         status.write(f"Generating image {i}...")
                         img_path = generate_image_variation(
                             client,
@@ -777,15 +891,22 @@ if _do_generate:
                             f"image_{i}.png",
                             cost_tracker,
                         )
+                        tracer.add(f"generate_image_{i}", "completed",
+                                   metadata={"output_path": str(img_path)})
                         prev_json = next_json
                         prev_image_path = img_path
                         all_image_paths.append(img_path)
 
                     if comics and len(all_image_paths) > 0:
+                        tracer.add("generate_comics_dialog", "started")
                         status.write("Generating comics dialog...")
                         dialog_data = generate_comics_dialog(client, generated_prompts, cost_tracker=cost_tracker)
+                        tracer.add("generate_comics_dialog", "completed")
+                        tracer.add("compose_comics_pages", "started")
                         status.write("Composing comics pages...")
                         comic_pages = compose_comics_pages(all_image_paths, dialog_data, out_dir, style=style_val)
+                        tracer.add("compose_comics_pages", "completed",
+                                   metadata={"num_pages": len(comic_pages)})
                         comics_data = [
                             {"name": p.name, "bytes": p.read_bytes(), "ext": p.suffix}
                             for p in comic_pages
@@ -811,21 +932,23 @@ if _do_generate:
                 import cloudinary_utils
                 import db
                 db_session = db.get_session()
-                
+
                 image_urls = []
+                tracer.add("upload_cloudinary_images", "started",
+                           metadata={"num_images": len(st.session_state.get("images", []))})
                 for i_data in st.session_state.get("images", []):
                     import tempfile
                     import os
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
                         tmp.write(i_data["bytes"])
                         tmp_path = tmp.name
-                        
+
                     cloud_url = cloudinary_utils.upload_file_to_cloudinary(tmp_path, resource_type="image")
                     if cloud_url:
                         image_urls.append(cloud_url)
-                        
+
                     os.unlink(tmp_path)
-                
+
                 for i_data in st.session_state.get("comics_images", []):
                     import tempfile
                     import os
@@ -836,12 +959,14 @@ if _do_generate:
                     if cloud_url:
                         image_urls.append(cloud_url)
                     os.unlink(tmp_path)
-                
+                tracer.add("upload_cloudinary_images", "completed",
+                           metadata={"uploaded_count": len(image_urls), "urls": image_urls})
+
                 try:
                     user_id = st.session_state.get("user_id")
                     if user_id and image_urls:
                         total_cost = st.session_state["cost"]
-                        
+
                         from datetime import datetime
                         session_name = f"{'Comics' if _is_comics else 'Image'} Gen - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
                         new_session = db.Session(user_id=user_id, session_name=session_name, total_cost=total_cost)
@@ -850,8 +975,8 @@ if _do_generate:
 
                         metadata = {
                             "prompts": st.session_state.get("generated_prompts", []),
-                            "resolution": "16:9", # Default for images
-                            "aspect_ratio": "16:9", # Default for images
+                            "resolution": "16:9",
+                            "aspect_ratio": "16:9",
                             "total_images": total_images
                         }
 
@@ -864,16 +989,22 @@ if _do_generate:
                         )
                         db_session.add(new_gen)
                         db_session.commit()
+                        tracer.add("save_to_db", "completed",
+                                   metadata={"generation_id": new_gen.id, "total_cost": total_cost})
+                        tracer.add("generation_complete", "completed",
+                                   metadata={"total_cost": total_cost})
+                        tracer.flush(db_session, new_gen.id)
                 except Exception as e:
                     print(f"Error saving to DB: {e}")
                 finally:
                     db_session.close()
-                    
+
             except Exception as e:
                 print(f"Error in image upload/save: {e}")
 
 
     except Exception as exc:
+        tracer.add("generation_failed", "failed", message=str(exc))
         st.error(f"Generation failed: {exc}")
 
     finally:

@@ -1,5 +1,5 @@
 import streamlit as st
-from sqlalchemy import create_engine, Column, String, Float, DateTime, ForeignKey, Text, JSON
+from sqlalchemy import create_engine, Column, String, Float, DateTime, ForeignKey, Text, JSON, Integer
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 import uuid
 from datetime import datetime
@@ -43,6 +43,21 @@ class Generation(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     
     session = relationship("Session", back_populates="generations")
+    traces = relationship("GenerationTrace", back_populates="generation", cascade="all, delete-orphan")
+
+class GenerationTrace(Base):
+    __tablename__ = 'generation_traces'
+    id            = Column(String, primary_key=True, default=generate_uuid)
+    generation_id = Column(String, ForeignKey('generations.id'), nullable=False)
+    step_number   = Column(Integer, nullable=False)
+    step_name     = Column(String, nullable=False)
+    status        = Column(String, nullable=False)   # "started" | "completed" | "failed"
+    message       = Column(Text, nullable=True)
+    metadata_json = Column(JSON, nullable=True)
+    elapsed_sec   = Column(Float, nullable=True)
+    created_at    = Column(DateTime, default=datetime.utcnow)
+
+    generation = relationship("Generation", back_populates="traces")
 
 @st.cache_resource
 def get_engine():
