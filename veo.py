@@ -1262,14 +1262,11 @@ def generate_video(client, prompt, resolution, aspect_ratio, reference_image_pat
     print(f"   prompt (first 200 chars): {video_prompt[:200]!r}")
 
     if reference_image_path:
+        print(f"   Reading reference image: {reference_image_path}")
         mime_type = "image/png" if str(reference_image_path).lower().endswith(".png") else "image/jpeg"
-        print(f"   Uploading reference image to Files API: {reference_image_path}")
-        uploaded = client.files.upload(
-            file=reference_image_path,
-            config=types.UploadFileConfig(mime_type=mime_type, display_name=Path(reference_image_path).name),
-        )
-        print(f"   Uploaded: {uploaded.name}  URI: {uploaded.uri}")
-        generate_kwargs["image"] = types.Image(gcs_uri=uploaded.uri)
+        with open(reference_image_path, "rb") as f:
+            image_bytes = f.read()
+        generate_kwargs["image"] = types.Image(image_bytes=image_bytes, mime_type=mime_type)
 
     operation = client.models.generate_videos(**generate_kwargs)
 

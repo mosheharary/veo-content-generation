@@ -327,15 +327,11 @@ def generate_video_streamlit(
     kwargs = {"model": VEO_MODEL, "prompt": video_prompt, "config": config}
 
     if reference_image_path:
+        status_widget.write(f"Reading reference image...")
         mime = "image/png" if Path(reference_image_path).suffix.lower() == ".png" else "image/jpeg"
-        status_widget.write(f"Uploading reference image...")
-        uploaded = client.files.upload(
-            file=str(reference_image_path),
-            config=types.UploadFileConfig(
-                mime_type=mime, display_name=Path(reference_image_path).name
-            ),
-        )
-        kwargs["image"] = types.Image(gcs_uri=uploaded.uri)
+        with open(str(reference_image_path), "rb") as f:
+            image_bytes = f.read()
+        kwargs["image"] = types.Image(image_bytes=image_bytes, mime_type=mime)
 
     status_widget.write("Starting generation request...")
     operation = client.models.generate_videos(**kwargs)
@@ -479,7 +475,15 @@ def extend_video_streamlit(
         response = getattr(operation, "response", None)
         videos = getattr(response, "generated_videos", None) if response else None
         if not videos:
-            raise RuntimeError("No videos generated in extension")
+            rai_reasons = getattr(response, "rai_media_filtered_reasons", None) if response else None
+            reason = (
+                rai_reasons[0] if rai_reasons
+                else getattr(response, "error", None)
+                or getattr(response, "message", None)
+                or "No videos generated (possible content policy rejection)"
+            )
+            print(f"[DEBUG] extension response: {response}")
+            raise RuntimeError(f"Extension {i + 1} failed: {reason}")
 
         current_video = videos[0].video
         cost_tracker.add_video(
@@ -532,7 +536,7 @@ if mode == "Video":
     col4, col5, col6 = st.columns(3)
     extend_method = col4.selectbox(
         "Extend Method",
-        ["image", "video"],
+        ["video", "image"],
         index=0,
         help="'image' extracts the last frame and generates a new video. 'video' uses native extension (forces 720p).",
     )
