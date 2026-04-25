@@ -131,6 +131,7 @@ from veo import (
     IMAGE_MODEL,
     VEO_MODEL,
     VEO_PRICE_PER_SEC,
+    describe_image,
     generate_extension_prompts,
     generate_image_prompt_json,
     generate_video_prompt,
@@ -511,7 +512,7 @@ mode = st.radio("Mode", ["Video", "Image Only"], horizontal=True)
 
 prompt = st.text_area(
     "Description",
-    placeholder="A majestic eagle soaring over snow-capped mountains at golden hour...",
+    placeholder="A majestic eagle soaring over snow-capped mountains at golden hour... (optional when a reference image is provided)",
     height=100,
 )
 
@@ -519,6 +520,8 @@ uploaded_file = st.file_uploader(
     "Reference image (optional)",
     type=["png", "jpg", "jpeg"],
 )
+
+movie_name_val = None
 
 if mode == "Video":
     col1, col2, col3 = st.columns(3)
@@ -552,6 +555,11 @@ if mode == "Video":
         help="Apply a visual style to the video via AI prompt enhancement.",
     )
     video_style_val = None if video_style == "None" else video_style
+    prompt_only = st.checkbox(
+        "Enhance Prompt Only",
+        value=False,
+        help="Generate and display the enhanced prompt without running video generation.",
+    )
 
     # Extensions force 720p if video method
     effective_resolution = (
@@ -592,16 +600,43 @@ else:
 
     style_val = None if style == "None" else style
 
+    movie_name_val = None
+    character_name_val = None
+
+    if style == "behind-the-scenes":
+        _movie_input = st.text_input(
+            "Movie / TV Series Name",
+            placeholder="e.g. Titanic, Game of Thrones, Inception",
+            help="Required for the Behind the Scenes style — specifies which film or show is being depicted on set.",
+        )
+        movie_name_val = _movie_input.strip() or None
+
+    if style == "celeb-selfie":
+        _character_input = st.text_input(
+            "Famous Person / Character Name",
+            placeholder="e.g. Elon Musk, Taylor Swift, Barack Obama",
+            help="Required for the Celeb Selfie style — the famous person who will appear in the selfie.",
+        )
+        character_name_val = _character_input.strip() or None
+
+    prompt_only = st.checkbox(
+        "Enhance Prompt Only",
+        value=False,
+        help="Generate and display the enhanced image prompt without running image generation.",
+    )
+
+_bts_missing = locals().get("style") == "behind-the-scenes" and not movie_name_val
+_celeb_missing = locals().get("style") == "celeb-selfie" and not character_name_val
 generate_clicked = st.button(
     "Generate",
     type="primary",
-    disabled=not prompt.strip(),
+    disabled=(not prompt.strip() and not uploaded_file) or _bts_missing or _celeb_missing,
     width='stretch',
 )
 
 # ── Comics pre-generation approval ───────────────────────────────────────────
 
-_is_comics = mode == "Image Only" and locals().get("style") != "all" and locals().get("comics", False)
+_is_comics = mode == "Image Only" and locals().get("style") != "all" and locals().get("comics", False) and not locals().get("prompt_only", False)
 
 if generate_clicked and _is_comics:
     st.session_state["comics_confirm_pending"] = total_images
@@ -647,8 +682,73 @@ if _do_generate:
             tmp_image_path = out_dir / f"uploaded{suffix}"
             tmp_image_path.write_bytes(uploaded_file.read())
 
+        if not prompt.strip() and tmp_image_path:
+            with st.spinner("No prompt provided — auto-describing reference image..."):
+                tracer.add("describe_image", "started")
+                prompt = describe_image(client, tmp_image_path, cost_tracker=cost_tracker)
+                tracer.add("describe_image", "completed", message=prompt[:300])
+            st.info(f"Auto-generated description: {prompt}")
+
         with st.status("Generating...", expanded=True) as status:
-            if mode == "Video":
+            if prompt_only:
+                if mode == "Video":
+                    tracer.add("enhance_prompt", "started")
+                    status.write("Enhancing video prompt...")
+                    _po_enhanced = generate_video_prompt(
+                        client, prompt, cost_tracker=cost_tracker, style=video_style_val
+                    )
+                    tracer.add("enhance_prompt", "completed",
+                               message=_po_enhanced[:300],
+                               metadata={"enhanced_prompt": _po_enhanced})
+                    _po_label = "Enhanced Video Prompt"
+                    _po_style = video_style_val
+                else:
+                    tracer.add("enhance_prompt", "started")
+                    status.write("Enhancing image prompt...")
+                    _po_enhanced = generate_image_prompt_json(
+                        client, prompt, cost_tracker, style=style_val, movie_name=movie_name_val, character_name=character_name_val
+                    )
+                    tracer.add("enhance_prompt", "completed",
+                               message=_po_enhanced[:300],
+                               metadata={"enhanced_prompt": _po_enhanced})
+                    _po_label = "Enhanced Image Prompt"
+                    _po_style = style_val
+                status.update(label="Done!", state="complete")
+                _po_cost = cost_tracker.total() if hasattr(cost_tracker, "total") else 0.0
+                st.session_state["cost"] = st.session_state.get("cost", 0.0) + _po_cost
+                try:
+                    import db as _db
+                    _db_session = _db.get_session()
+                    try:
+                        _user_id = st.session_state.get("user_id")
+                        if _user_id:
+                            from datetime import datetime as _dt
+                            _po_session = _db.Session(
+                                user_id=_user_id,
+                                session_name=f"Prompt Only - {_dt.now().strftime('%Y-%m-%d %H:%M')}",
+                                total_cost=_po_cost,
+                            )
+                            _db_session.add(_po_session)
+                            _db_session.flush()
+                            _po_gen = _db.Generation(
+                                session_id=_po_session.id,
+                                gen_type="prompt_only",
+                                prompt=prompt,
+                                metadata_json={"enhanced_prompt": _po_enhanced, "mode": mode, "style": _po_style},
+                                media_url=None,
+                            )
+                            _db_session.add(_po_gen)
+                            _db_session.commit()
+                            tracer.flush(_db_session, _po_gen.id)
+                    except Exception as _e:
+                        print(f"Error saving to DB: {_e}")
+                    finally:
+                        _db_session.close()
+                except Exception as _e:
+                    print(f"Error in DB save: {_e}")
+                st.session_state["prompt_only_result"] = (_po_label, _po_enhanced)
+
+            elif mode == "Video":
                 tracer.add("generation_start", "started", metadata={
                     "mode": "video",
                     "prompt": prompt,
@@ -799,6 +899,10 @@ if _do_generate:
                     status.write(f"Generating images for all {len(STYLE_DEFINITIONS)} styles...")
                     all_style_paths = []
                     for s_name in STYLE_DEFINITIONS.keys():
+                        if STYLE_DEFINITIONS.get(s_name, {}).get("requires_movie_name") or \
+                           STYLE_DEFINITIONS.get(s_name, {}).get("requires_character_name"):
+                            status.write(f"Skipping {s_name} — requires additional parameter")
+                            continue
                         s_dir = out_dir / s_name
                         s_dir.mkdir()
                         try:
@@ -847,7 +951,7 @@ if _do_generate:
                     tracer.add("generate_prompt_1", "started")
                     status.write(f"Generating prompt 1...")
                     prev_json = generate_image_prompt_json(
-                        client, prompt, cost_tracker, style=style_val
+                        client, prompt, cost_tracker, style=style_val, movie_name=movie_name_val, character_name=character_name_val
                     )
                     generated_prompts.append(prev_json)
                     tracer.add("generate_prompt_1", "completed")
@@ -881,7 +985,7 @@ if _do_generate:
                         tracer.add(f"generate_prompt_{i}", "started")
                         status.write(f"Generating prompt {i}...")
                         next_json = generate_continuation_prompt_json(
-                            client, prev_json, cost_tracker, style=style_val
+                            client, prev_json, cost_tracker, style=style_val, movie_name=movie_name_val, character_name=character_name_val
                         )
                         generated_prompts.append(next_json)
                         tracer.add(f"generate_prompt_{i}", "completed")
@@ -1015,6 +1119,20 @@ if _do_generate:
         # Clean up out_dir to prevent infinite growth
         if out_dir.exists():
             shutil.rmtree(out_dir, ignore_errors=True)
+
+# ── Prompt-only result display ───────────────────────────────────────────────
+
+if st.session_state.get("prompt_only_result"):
+    _po_label, _po_text = st.session_state["prompt_only_result"]
+    st.divider()
+    col_result, col_clear = st.columns([6, 1])
+    with col_result:
+        st.subheader(_po_label)
+    with col_clear:
+        if st.button("🗑️ Clear", key="clear_prompt_only", width='stretch'):
+            st.session_state.pop("prompt_only_result", None)
+            st.rerun()
+    st.text_area("", value=_po_text, height=300, key="prompt_only_display")
 
 # ── Results display ──────────────────────────────────────────────────────────
 

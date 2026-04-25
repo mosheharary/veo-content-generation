@@ -380,7 +380,176 @@ STYLE_DEFINITIONS = {
         ),
         "dialog_field": "",
     },
+    "baroque": {
+        "description": "17th-century Baroque painting — dramatic diagonal composition, theatrical light shafts, rich jewel tones, ornate detail, Rubens/Velázquez grandeur.",
+        "init_note": (
+            "The image MUST be in a 17th-century Baroque painting style: theatrical diagonal compositions, "
+            "dramatic shaft-of-light chiaroscuro, rich jewel-toned pigments, ornate decorative detail, "
+            "sumptuous fabrics and textures, monumental scale. "
+            'Set "aesthetics.style" to "Baroque painting, dramatic lighting, Rubens/Velázquez, jewel tones, theatrical" '
+            "and reflect this throughout all other fields.\n"
+        ),
+        "cont_note": (
+            "Maintain the Baroque painting style: theatrical lighting shafts, rich jewel tones, dramatic diagonal composition.\n"
+        ),
+        "dialog_field": "",
+    },
+    "pencil-sketch": {
+        "description": "Detailed graphite/charcoal pencil drawing — cross-hatching, raw smudged shadows, white paper showing through, expressive hand-drawn energy.",
+        "init_note": (
+            "The image MUST be in a detailed graphite pencil sketch style: precise cross-hatching for shadows, "
+            "smudged charcoal shading, raw expressive line work, white paper showing through highlights, "
+            "visible eraser marks and construction lines. "
+            'Set "aesthetics.style" to "graphite pencil sketch, cross-hatching, charcoal, hand-drawn, monochrome" '
+            "and reflect this throughout all other fields.\n"
+        ),
+        "cont_note": (
+            "Maintain the graphite pencil sketch style: cross-hatching, charcoal shading, expressive line work on white paper.\n"
+        ),
+        "dialog_field": "",
+    },
+    "stained-glass": {
+        "description": "Medieval stained glass window art — bold lead-line outlines, saturated jewel-color panes, flat geometric forms, sacred/gothic light quality.",
+        "init_note": (
+            "The image MUST be rendered as a medieval stained glass window: thick bold black lead-line outlines "
+            "dividing the image into flat geometric color panes, saturated jewel-toned glass "
+            "(ruby red, sapphire blue, emerald green, amber gold), glowing translucent quality as if backlit, "
+            "gothic architectural framing. "
+            'Set "aesthetics.style" to "medieval stained glass, lead lines, jewel colors, gothic, flat geometric panes" '
+            "and reflect this throughout all other fields.\n"
+        ),
+        "cont_note": (
+            "Maintain the stained glass style: bold lead-line outlines, flat jewel-toned glass panes, glowing backlit quality.\n"
+        ),
+        "dialog_field": "",
+    },
+    "pop-art": {
+        "description": "Andy Warhol / Roy Lichtenstein pop art — bold flat primary colors, Ben-Day halftone dots, silkscreen repetition, thick outlines, consumer-culture irony.",
+        "init_note": (
+            "The image MUST be in a pop art style inspired by Andy Warhol and Roy Lichtenstein: "
+            "bold flat primary and secondary colors, Ben-Day halftone dot patterns, thick black outlines, "
+            "silkscreen printing aesthetic, high contrast, graphic and commercial feel, "
+            "bright yellows/reds/cyans/magentas. "
+            'Set "aesthetics.style" to "pop art, Warhol silkscreen, Lichtenstein halftone dots, bold flat colors, graphic" '
+            "and reflect this throughout all other fields.\n"
+        ),
+        "cont_note": (
+            "Maintain the pop art style: bold flat primary colors, Ben-Day halftone dots, thick outlines, silkscreen aesthetic.\n"
+        ),
+        "dialog_field": "",
+    },
+    "chinese-ink": {
+        "description": "Traditional Chinese sumi-e ink wash painting — minimalist calligraphic brushstrokes, abundant negative space, misty mountains, zen tranquility.",
+        "init_note": (
+            "The image MUST be in a traditional Chinese sumi-e ink wash painting style: "
+            "fluid calligraphic brushstrokes in black ink with subtle gray washes, "
+            "abundant empty white space (negative space as a compositional element), "
+            "misty atmospheric perspective, bamboo/mountain/crane motifs if thematically appropriate, zen minimalism. "
+            'Set "aesthetics.style" to "Chinese sumi-e ink wash, calligraphic brushstrokes, minimalist, negative space, zen" '
+            "and reflect this throughout all other fields.\n"
+        ),
+        "cont_note": (
+            "Maintain the Chinese ink wash style: calligraphic brushstrokes, ink and wash tones, abundant negative space, zen minimalism.\n"
+        ),
+        "dialog_field": "",
+    },
+    "isometric": {
+        "description": "Clean isometric 3D illustration — precise 30° geometric perspective, flat pastel or bold colors, architectural cross-section, video-game diorama look.",
+        "init_note": (
+            "The image MUST be in a clean isometric 3D illustration style: strict 30-degree isometric projection, "
+            "flat-shaded geometric shapes with no perspective distortion, crisp clean edges, "
+            "bold or pastel color blocking, architectural cross-section diorama aesthetic, game-art clarity. "
+            'Set "aesthetics.style" to "isometric illustration, 30-degree projection, flat shading, geometric, diorama, game art" '
+            "and reflect this throughout all other fields.\n"
+        ),
+        "cont_note": (
+            "Maintain the isometric illustration style: 30-degree projection, flat-shaded geometric shapes, diorama composition.\n"
+        ),
+        "dialog_field": "",
+    },
+    "surrealism": {
+        "description": "Dalí / Magritte surrealist painting — photorealistic rendering of impossible dreamlike scenes, melting forms, impossible scale, uncanny juxtapositions.",
+        "init_note": (
+            "The image MUST be in a surrealist painting style inspired by Salvador Dalí and René Magritte: "
+            "hyperrealistic detailed rendering applied to impossible, dreamlike scenes — "
+            "melting objects, impossible scale relationships, objects floating in void, "
+            "unexpected juxtapositions of mundane and bizarre, painterly oil-painting technique with deeply unsettling content. "
+            'Set "aesthetics.style" to "surrealist painting, Dalí, Magritte, hyperrealistic dreamscape, impossible scenes" '
+            "and reflect this throughout all other fields.\n"
+        ),
+        "cont_note": (
+            "Maintain the surrealist painting style: hyperrealistic rendering of impossible dreamlike scenes, uncanny juxtapositions.\n"
+        ),
+        "dialog_field": "",
+    },
+    "golden-age": {
+        "description": "Golden Age of American illustration — Norman Rockwell / N.C. Wyeth warm storytelling, rich earthy palette, heroic figures, magazine-cover narrative craft.",
+        "init_note": (
+            "The image MUST be in the Golden Age of American illustration style inspired by Norman Rockwell and N.C. Wyeth: "
+            "warm earthy palette with rich ochres, umbers and creams, meticulous narrative storytelling, "
+            "idealized yet relatable characters, magazine-cover compositional polish, heroic dramatic lighting. "
+            'Set "aesthetics.style" to "Golden Age illustration, Norman Rockwell, N.C. Wyeth, warm palette, narrative, magazine cover" '
+            "and reflect this throughout all other fields.\n"
+        ),
+        "cont_note": (
+            "Maintain the Golden Age illustration style: warm earthy palette, narrative storytelling, Norman Rockwell / N.C. Wyeth craft.\n"
+        ),
+        "dialog_field": "",
+    },
+    "celeb-selfie": {
+        "description": "Raw candid iPhone selfie with a famous person — photographic realism, phone flash, ISO grain. Requires --character-name.",
+        "requires_character_name": True,
+        "init_note": (
+            "The image MUST look like a raw unedited iPhone selfie: "
+            "the main subject and {character_name} standing close together, shoulder-to-shoulder, both leaning slightly into frame. "
+            "{character_name} must appear as their most recognizable real-world self with accurate hair, facial features, and age-appropriate appearance. "
+            "Set 'subject' to describe both people side-by-side in a casual pose. "
+            "Set 'camera' to handheld front-facing phone camera at arm's length with a slight upward tilt; close proximity causing subtle lens distortion. "
+            "Set 'lighting' to soft indoor ambient mixed with phone flash causing mild overexposure on highlights and natural shadow falloff. "
+            "Set 'aesthetics.style' to 'raw candid iPhone selfie, photographic realism, unpolished, off-center framing, subtle ISO grain, uneven white balance'. "
+            "Include: natural skin texture with pores, stray hairs, fabric creases, background slightly out of focus with everyday environment elements, minor motion blur at edges, imperfect crop. "
+            "Both subjects must have a direct gaze into the camera with relaxed, neutral expressions.\n"
+        ),
+        "cont_note": (
+            "Maintain the raw iPhone selfie aesthetic: both the main subject and {character_name} visible, "
+            "candid shoulder-to-shoulder pose, phone flash lighting, ISO grain, off-center framing, photographic realism.\n"
+        ),
+        "dialog_field": "",
+    },
+    "behind-the-scenes": {
+        "description": "Raw on-set snapshot — handheld camera, ISO grain, film crew visible, harsh mixed lighting for a named movie/TV show. Requires --movie-title.",
+        "requires_movie_name": True,
+        "init_note": (
+            "The image MUST look like a raw behind-the-scenes on-set snapshot taken during the filming of {movie_name}. "
+            "IMPORTANT: Set the 'subject' field to specifically name the main character(s) from {movie_name} in their exact costume, makeup, and styling as they appear in the final film — do NOT use generic descriptions. "
+            "Set 'scene.description' and 'scene.environment' to describe a recognizable filming location or set from {movie_name} (e.g. a specific episode's set, a well-known location from the story). "
+            "The film/show name '{movie_name}' must be clearly reflected in subject, scene, agents, and actions fields. "
+            "Crew filming a scene: director mid-discussion with camera operator, actors off to the side in full wardrobe "
+            "and makeup looking exactly as they do in the final film — accurate hair, costume, and character styling "
+            "unchanged. The staged moment is a clearly recognizable scene with matching set design, props, and blocking. "
+            "Boom mic dipping slightly into frame, cables tangled across the floor, light stands and reflectors crowding "
+            "the space. Sony a7S III with 50mm f1.8 handheld, slightly off-level framing, harsh mixed lighting from "
+            "practicals and film rigs, blown highlights and shadow falloff, visible skin texture with sweat and worn "
+            "makeup, stray hairs and wrinkled fabric, background crew in subtle motion blur, noticeable ISO grain and "
+            "color shift from mixed light, unpolished and intrusive feel. "
+            "Set \"aesthetics.style\" to \"raw behind-the-scenes on-set photography, handheld, ISO grain, harsh mixed "
+            "lighting, film crew\" and reflect this throughout all other fields.\n"
+        ),
+        "cont_note": (
+            "Maintain the raw behind-the-scenes on-set photography style for {movie_name}: "
+            "continue with the same characters from {movie_name} in their costumes, "
+            "handheld camera feel, harsh mixed lighting, ISO grain, film crew elements visible.\n"
+        ),
+        "dialog_field": "",
+    },
 }
+
+# Appended to every image generation request to encourage maximum output quality.
+IMAGE_QUALITY_SUFFIX = (
+    " Generate at the highest possible resolution and detail level: "
+    "ultra-sharp focus, maximum pixel density, fine texture detail, "
+    "no compression artifacts, photographic or painterly crispness throughout."
+)
 
 # Constraints
 EXTENSION_RESOLUTION = "720p"
@@ -438,6 +607,31 @@ class CostTracker:
         print("  (Estimates based on published Google AI pricing)")
 
 
+def describe_image(client, image_path, cost_tracker=None):
+    """Use TEXT_MODEL (vision) to auto-generate a descriptive prompt from a reference image."""
+    mime_type = "image/png" if str(image_path).lower().endswith(".png") else "image/jpeg"
+    with open(str(image_path), "rb") as f:
+        image_bytes = f.read()
+    response = client.models.generate_content(
+        model=TEXT_MODEL,
+        contents=[
+            types.Part(inline_data=types.Blob(data=image_bytes, mime_type=mime_type)),
+            types.Part(text=(
+                "Describe this image in detail for use as a creative visual generation prompt. "
+                "Include the main subject(s), setting, lighting, mood, colors, and notable visual elements. "
+                "Write a single descriptive paragraph, no headers or lists."
+            )),
+        ],
+    )
+    if cost_tracker and response.usage_metadata:
+        cost_tracker.add_text(
+            input_tokens=response.usage_metadata.prompt_token_count or 0,
+            output_tokens=response.usage_metadata.candidates_token_count or 0,
+            label="Image description",
+        )
+    return response.text.strip()
+
+
 def generate_extension_prompts(client, original_prompt, num_extensions, cost_tracker=None):
     """Generate N extension prompts using gemini-3.1-pro-preview."""
     request = (
@@ -461,10 +655,14 @@ def generate_extension_prompts(client, original_prompt, num_extensions, cost_tra
     return prompts[:num_extensions]
 
 
-def generate_image_prompt_json(client, idea, cost_tracker=None, style=None):
+def generate_image_prompt_json(client, idea, cost_tracker=None, style=None, movie_name=None, character_name=None):
     """Use TEXT_MODEL to generate a detailed structured JSON image prompt from a general idea."""
     style_def = STYLE_DEFINITIONS.get(style, {}) if style else {}
     style_note = style_def.get("init_note", "")
+    if movie_name and "{movie_name}" in style_note:
+        style_note = style_note.replace("{movie_name}", movie_name)
+    if character_name and "{character_name}" in style_note:
+        style_note = style_note.replace("{character_name}", character_name)
     dialog_field = style_def.get("dialog_field", "")
     request = (
         f'Given this general idea: "{idea}"\n'
@@ -525,10 +723,14 @@ def generate_video_prompt(client, idea, cost_tracker=None, style=None):
     return response.text.strip()
 
 
-def generate_continuation_prompt_json(client, previous_prompt_json, cost_tracker=None, style=None):
+def generate_continuation_prompt_json(client, previous_prompt_json, cost_tracker=None, style=None, movie_name=None, character_name=None):
     """Use TEXT_MODEL to generate the next storyboard frame prompt, continuing from the previous JSON prompt."""
     style_def = STYLE_DEFINITIONS.get(style, {}) if style else {}
     style_note = style_def.get("cont_note", "")
+    if movie_name and "{movie_name}" in style_note:
+        style_note = style_note.replace("{movie_name}", movie_name)
+    if character_name and "{character_name}" in style_note:
+        style_note = style_note.replace("{character_name}", character_name)
     request = (
         "You are building a visual storyboard. Here is the previous frame's image prompt in JSON format:\n"
         f"{previous_prompt_json}\n\n"
@@ -584,7 +786,8 @@ def generate_image_from_reference(client, prompt, image_path, output_dir, cost_t
         contents=[
             types.Part(
                 text=(
-                    f"Create an image based on this description: {prompt}. "
+                    f"Create an image based on this description: {prompt}."
+                    f"{IMAGE_QUALITY_SUFFIX} "
                     "The provided photo is of a private individual (not a public figure or celebrity). "
                     "This image is being used with full consent for personal creative purposes. "
                     "Use the provided photo as the character reference. Preserve the face, skin tone, hairstyle, and overall identity. Do not alter the facial identity. "
@@ -631,7 +834,7 @@ def generate_image_from_text(client, json_prompt, output_dir, filename="image.pn
     """Use IMAGE_MODEL to generate an image from a text/JSON prompt with no reference image."""
     response = client.models.generate_content(
         model=IMAGE_MODEL,
-        contents=[types.Part(text=json_prompt)],
+        contents=[types.Part(text=json_prompt + IMAGE_QUALITY_SUFFIX)],
         config=types.GenerateContentConfig(response_modalities=["IMAGE"]),
     )
     if cost_tracker and response.usage_metadata:
@@ -654,10 +857,18 @@ def generate_image_variation(client, json_prompt, reference_image_path, output_d
     """Use IMAGE_MODEL to generate an image variation using a reference image and JSON prompt."""
     with open(reference_image_path, "rb") as f:
         image_bytes = f.read()
+    instruction = (
+        "You are generating the NEXT frame in a storyboard sequence.\n"
+        "The provided image is the PREVIOUS frame — use it ONLY as a reference for "
+        "character appearance, visual style, and color palette consistency.\n"
+        "Do NOT copy or slightly modify the reference image.\n"
+        "Generate a COMPLETELY NEW scene that faithfully follows the description below, "
+        "including its specific action, camera angle, and composition.\n\n"
+    )
     response = client.models.generate_content(
         model=IMAGE_MODEL,
         contents=[
-            types.Part(text=json_prompt),
+            types.Part(text=instruction + json_prompt + IMAGE_QUALITY_SUFFIX),
             types.Part(inline_data=types.Blob(data=image_bytes, mime_type="image/png")),
         ],
         config=types.GenerateContentConfig(response_modalities=["IMAGE"]),
@@ -1430,7 +1641,22 @@ def cmd_generate(client, args):
             sys.exit(1)
         args.prompt = args.prompt_file.read_text().strip()
     elif not args.prompt:
-        print("Error: provide --prompt TEXT or --prompt-file PATH")
+        if args.image and Path(args.image).exists():
+            print(f"No prompt provided — auto-describing reference image with {TEXT_MODEL}...")
+            args.prompt = describe_image(client, args.image)
+            print(f"Auto-described prompt: {args.prompt}")
+        else:
+            print("Error: provide --prompt TEXT or --prompt-file PATH")
+            sys.exit(1)
+
+    movie_name = getattr(args, "movie_title", None)
+    if STYLE_DEFINITIONS.get(getattr(args, "style", None), {}).get("requires_movie_name") and not movie_name:
+        print("Error: --movie-title is required when using --style behind-the-scenes")
+        sys.exit(1)
+
+    character_name = getattr(args, "character_name", None)
+    if STYLE_DEFINITIONS.get(getattr(args, "style", None), {}).get("requires_character_name") and not character_name:
+        print("Error: --character-name is required when using --style celeb-selfie")
         sys.exit(1)
 
     resolution = args.resolution
@@ -1458,6 +1684,26 @@ def cmd_generate(client, args):
 
     cost = CostTracker()
 
+    # --prompt-only: enhance and print the prompt, then exit without generating
+    if getattr(args, "prompt_only", False):
+        if args.image_only:
+            print(f"\nGenerating image prompt using {TEXT_MODEL}...")
+            enhanced = generate_image_prompt_json(client, args.prompt, cost_tracker=cost, style=args.style, movie_name=movie_name, character_name=character_name)
+            print(f"\n{'=' * 60}")
+            print("ENHANCED IMAGE PROMPT")
+            print(f"{'=' * 60}")
+            print(enhanced)
+        else:
+            print(f"\nEnhancing video prompt using {TEXT_MODEL}...")
+            enhanced = generate_video_prompt(client, args.prompt, cost_tracker=cost, style=args.style)
+            print(f"\n{'=' * 60}")
+            print("ENHANCED VIDEO PROMPT")
+            print(f"{'=' * 60}")
+            print(enhanced)
+        print(f"{'=' * 60}")
+        cost.print_summary()
+        return
+
     # --style all: generate one image per style into per-style subdirectories
     if args.style == "all":
         if not args.image_only:
@@ -1475,6 +1721,10 @@ def cmd_generate(client, args):
         all_style_paths = []
         failed_styles = []
         for style_name in all_styles:
+            if STYLE_DEFINITIONS.get(style_name, {}).get("requires_movie_name") or \
+               STYLE_DEFINITIONS.get(style_name, {}).get("requires_character_name"):
+                print(f"\n[{style_name}] Skipped — requires additional parameter")
+                continue
             style_dir = output_dir / style_name
             style_dir.mkdir(parents=True, exist_ok=True)
             try:
@@ -1524,7 +1774,7 @@ def cmd_generate(client, args):
         # Generate first prompt from the initial idea
         print(f"\nGenerating image prompt 1 using {TEXT_MODEL}...")
         suffix = f"_1" if n > 1 else ""
-        first_json = generate_image_prompt_json(client, args.prompt, cost_tracker=cost, style=args.style)
+        first_json = generate_image_prompt_json(client, args.prompt, cost_tracker=cost, style=args.style, movie_name=movie_name, character_name=character_name)
         (output_dir / f"image_prompt{suffix}.json").write_text(first_json)
         print(f"   Prompt 1 saved to: {output_dir / f'image_prompt{suffix}.json'}")
         first_filename_preview = "image_1.png" if n > 1 else "image.png"
@@ -1559,7 +1809,7 @@ def cmd_generate(client, args):
         # Generate images 2-N: each prompt continues from previous, each image uses previous image as reference
         for i in range(2, n + 1):
             print(f"\nGenerating image prompt {i} using {TEXT_MODEL} (continues from prompt {i - 1})...")
-            next_json = generate_continuation_prompt_json(client, prev_json, cost_tracker=cost, style=args.style)
+            next_json = generate_continuation_prompt_json(client, prev_json, cost_tracker=cost, style=args.style, movie_name=movie_name, character_name=character_name)
             (output_dir / f"image_prompt_{i}.json").write_text(next_json)
             print(f"   Prompt {i} saved to: {output_dir / f'image_prompt_{i}.json'}")
             print(f"\n--- JSON used for image_{i}.png ---")
@@ -1759,12 +2009,26 @@ examples:
             "Choices: all, " + ", ".join(STYLE_DEFINITIONS.keys())
         ),
     )
+    gen.add_argument(
+        "--movie-title",
+        type=str,
+        metavar="TITLE",
+        help="Movie or TV series name — required when --style behind-the-scenes",
+    )
+    gen.add_argument(
+        "--character-name",
+        type=str,
+        metavar="NAME",
+        help="Famous person or character name — required when --style celeb-selfie",
+    )
     gen.add_argument("--comics", action="store_true", help="Compose generated images into comics page(s) at the end (use --style comics to also apply comic art style)")
     gen.add_argument("--html", action="store_true", help="Render generated image(s) into a self-contained HTML file (images.html) with base64-embedded images")
     gen.add_argument("--aspect-ratio", type=str, choices=["16:9", "9:16"], default="16:9",
                      help="Aspect ratio (default: 16:9)")
     gen.add_argument("--resolution", type=str, choices=["720p", "1080p", "4k"], default="1080p",
                      help="Resolution (default: 1080p)")
+    gen.add_argument("--prompt-only", action="store_true",
+                     help="Only enhance and print the prompt; skip video/image generation.")
 
     # ── list ────────────────────────────────────────────────────────────
     subparsers.add_parser("list", help="List all files in your Google Files API account")

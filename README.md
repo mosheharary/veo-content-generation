@@ -13,7 +13,7 @@ A tool for generating videos and images using Google AI's latest models. Provide
 - **Image generation** — storyboard sequences with style-locked continuation
 - **Video extensions** — chain multiple segments using last-frame or native extension
 - **Reference images** — restyle a photo and use it to anchor video generation
-- **20 visual styles** — comics, anime, Pixar, film-noir, Studio Ghibli, and more
+- **32 visual styles** — comics, anime, Pixar, film-noir, Studio Ghibli, baroque, surrealism, and more
 - **Comics page composer** — lay out generated images into print-ready comics pages with AI-written dialog
 - **Cost tracking** — live cost estimates and per-session totals
 
@@ -82,6 +82,8 @@ The CLI resolves the Google API key in this order:
 | `--image-only` | off | Generate images instead of video |
 | `--total-images N` | `1` | Generate N storyboard images — prompt 1 from idea, each subsequent prompt continues from the previous |
 | `--style STYLE` | — | Visual style (see list below). Use `all` to generate one image per style |
+| `--movie-title TITLE` | — | Movie or TV series name — required when `--style behind-the-scenes` |
+| `--character-name NAME` | — | Famous person name — required when `--style celeb-selfie` |
 | `--comics` | off | Compose all generated images into comics page(s) with AI-generated dialog |
 | `--html` | off | Render generated images into a self-contained `images.html` file |
 
@@ -124,11 +126,17 @@ python veo.py --prompt "A space battle" --image-only --total-images 6 --style an
 # Anime storyboard composed into comics pages
 python veo.py --prompt "A space battle" --image-only --total-images 6 --style anime --comics
 
-# Generate one image per style (20 total)
+# Generate one image per style (32 total)
 python veo.py --prompt "A lone samurai" --image-only --style all
 
 # Film noir image with HTML viewer
 python veo.py --prompt "A detective in a dark alley" --image-only --style film-noir --html
+
+# Celeb selfie (requires --character-name)
+python veo.py --prompt "At a concert" --image-only --style celeb-selfie --character-name "Taylor Swift"
+
+# Behind-the-scenes (requires --movie-title)
+python veo.py --prompt "A chase scene" --image-only --style behind-the-scenes --movie-title "Breaking Bad"
 
 # List files in Google Files API
 python veo.py list
@@ -178,7 +186,7 @@ Select **Video** from the mode toggle.
 | **Extensions** | 0 – 20 | Number of continuation segments to append |
 | **Extend Method** | `image` · `video` | `image` = last-frame extraction (any resolution); `video` = native Veo (forces 720p) |
 | **Direct Image** | checkbox | Pass reference image straight to Veo without restyling |
-| **Style** | None + 20 styles | Applies style via AI prompt enhancement before generation |
+| **Style** | None + 32 styles | Applies style via AI prompt enhancement before generation |
 
 > The UI shows an **estimated cost** before generation and the **actual cost** afterward.
 
@@ -196,7 +204,7 @@ Select **Image Only** from the mode toggle.
 |---------|---------|-------|
 | **Description** | Free text | Main idea — expanded into structured JSON prompt by Gemini Pro |
 | **Reference image** | PNG / JPG upload | Optional — used as character/style anchor |
-| **Style** | None · all · 20 styles | `all` generates one image per style (20 API calls) |
+| **Style** | None · all · 32 styles | `all` generates one image per style (32 API calls) |
 | **Total Images** | 1 – 20 | Storyboard sequence; each image continues from the previous |
 | **Comics Page Layout** | checkbox | Compose images into comics pages with AI dialog |
 | **Total Pages** | 1 – 10 | Only visible when Comics is checked — total_pages × panels_per_page = images generated |
@@ -233,24 +241,34 @@ Available for both CLI (`--style`) and web UI.
 | `pixar` | Pixar/Disney 3D CGI — warm vibrant lighting, rounded expressive characters, cinematic depth of field |
 | `film-noir` | Black & white chiaroscuro, 1940s detective mood, venetian blind shadows, rain-slicked streets |
 | `anime` | Japanese anime — cel-shaded, vibrant saturated colors, expressive large eyes, speed lines, manga composition |
-| `watercolor` | Soft translucent brush strokes, bleeding ink edges, pastel tones, visible paper texture |
+| `watercolor` | Soft translucent brush strokes, bleeding ink edges, pastel tones, visible paper texture, impressionistic detail |
 | `studio-ghibli` | Lush hand-painted backgrounds, whimsical characters, soft natural lighting, warm nostalgic atmosphere |
 | `oil-painting` | Classical oil — rich impasto texture, dramatic chiaroscuro, deep pigments, Old Masters (Rembrandt/Caravaggio) |
 | `retro-80s` | Synthwave/vaporwave — neon pinks, purples and cyans, chrome lettering, perspective grid, Miami Vice palette |
 | `retro-50s` | 1950s Americana — warm Technicolor, atomic age optimism, halftone print, vintage ad illustration |
-| `retro-70s` | Warm amber and earth tones, analog film grain, Kodachrome color grading, vintage Polaroid warmth |
-| `cyberpunk` | Neon-soaked dystopian megacity, holographic ads, chrome implants, deep shadows, Blade Runner aesthetic |
+| `retro-70s` | 1970s retro — warm amber and avocado tones, grainy film look, bell-bottom culture, vintage Polaroid warmth |
+| `cyberpunk` | Neon-soaked dystopian megacity, holographic ads, chrome implants, deep shadows with neon highlights, Blade Runner aesthetic |
 | `fantasy` | High fantasy epic — sweeping grand landscapes, magical glowing elements, ornate armor, jewel tones, god-rays |
-| `pixel-art` | Retro 8-bit/16-bit — visible square pixels, limited 16-32 color palette, NES/SNES sprite aesthetic |
-| `impressionist` | French Impressionist — loose visible brushstrokes, dappled sunlight, soft blended colors, Monet/Renoir |
-| `horror` | Cinematic psychological horror — desaturated palette, deep blacks, unsettling composition, James Wan/del Toro |
-| `ukiyo-e` | Japanese ukiyo-e woodblock — flat bold colors, strong black outlines, Hokusai/Hiroshige composition |
-| `claymation` | Claymation stop-motion — visible clay textures, fingerprint marks, Aardman/Wallace & Gromit style |
-| `art-nouveau` | Art Nouveau — flowing organic lines, ornate botanical borders, Alphonse Mucha flat decorative style |
-| `documentary` | Cinematic documentary — candid natural light, desaturated tones, film grain, National Geographic style |
-| `low-poly` | Low-poly 3D geometric — flat-shaded triangular polygons, faceted crystal surfaces, bold color blocks |
-| `sci-fi` | Epic sci-fi concept art — vast alien environments, glowing technology, cosmic lighting, Syd Mead / Mass Effect |
-| `sport` | Dynamic sports photography — peak action freeze-frame, motion blur, dramatic stadium lighting, ESPN editorial |
+| `pixel-art` | Retro 8-bit/16-bit — visible square pixels, limited 16-32 color palette, hard edges, NES/SNES sprite aesthetic |
+| `impressionist` | French Impressionist — loose visible brushstrokes, dappled sunlight, soft blended colors, Monet/Renoir plein air |
+| `horror` | Cinematic psychological horror — desaturated palette, deep blacks, unsettling composition, grotesque details, James Wan/del Toro |
+| `ukiyo-e` | Japanese ukiyo-e woodblock — flat bold color areas, strong black outlines, Hokusai/Hiroshige composition, indigo and vermillion palette |
+| `claymation` | Claymation stop-motion — visible clay textures, fingerprint marks, wobbly organic forms, Aardman/Wallace & Gromit style |
+| `art-nouveau` | Art Nouveau — flowing organic lines, ornate botanical borders, elegant elongated figures, Alphonse Mucha flat decorative style |
+| `documentary` | Cinematic documentary — candid natural light, desaturated realistic tones, film grain, photojournalism National Geographic style |
+| `low-poly` | Low-poly 3D geometric — flat-shaded triangular polygons, faceted crystal-like surfaces, bold color blocks, modern digital illustration |
+| `sci-fi` | Epic sci-fi concept art — vast alien environments, glowing technology, hard-surface spacecraft, dramatic cosmic lighting, Syd Mead / Mass Effect |
+| `sport` | Dynamic sports photography — freeze-frame peak action, motion blur, dramatic stadium lighting, high contrast, ESPN/Sports Illustrated editorial |
+| `baroque` | 17th-century Baroque painting — dramatic diagonal composition, theatrical light shafts, rich jewel tones, ornate detail, Rubens/Velázquez grandeur |
+| `pencil-sketch` | Detailed graphite/charcoal pencil drawing — cross-hatching, raw smudged shadows, white paper showing through, expressive hand-drawn energy |
+| `stained-glass` | Medieval stained glass window art — bold lead-line outlines, saturated jewel-color panes, flat geometric forms, sacred/gothic light quality |
+| `pop-art` | Andy Warhol / Roy Lichtenstein pop art — bold flat primary colors, Ben-Day halftone dots, silkscreen repetition, thick outlines, consumer-culture irony |
+| `chinese-ink` | Traditional Chinese sumi-e ink wash painting — minimalist calligraphic brushstrokes, abundant negative space, misty mountains, zen tranquility |
+| `isometric` | Clean isometric 3D illustration — precise 30° geometric perspective, flat pastel or bold colors, architectural cross-section, video-game diorama look |
+| `surrealism` | Dalí / Magritte surrealist painting — photorealistic rendering of impossible dreamlike scenes, melting forms, impossible scale, uncanny juxtapositions |
+| `golden-age` | Golden Age of American illustration — Norman Rockwell / N.C. Wyeth warm storytelling, rich earthy palette, heroic figures, magazine-cover narrative craft |
+| `celeb-selfie` | Raw candid iPhone selfie with a famous person — photographic realism, phone flash, ISO grain. **Requires `--character-name`** |
+| `behind-the-scenes` | Raw on-set snapshot — handheld camera, ISO grain, film crew visible, harsh mixed lighting for a named movie/TV show. **Requires `--movie-title`** |
 
 ---
 
