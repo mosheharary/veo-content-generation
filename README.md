@@ -13,7 +13,7 @@ A tool for generating videos and images using Google AI's latest models. Provide
 - **Image generation** — storyboard sequences with style-locked continuation
 - **Video extensions** — chain multiple segments using last-frame or native extension
 - **Reference images** — restyle a photo and use it to anchor video generation
-- **32 visual styles** — comics, anime, Pixar, film-noir, Studio Ghibli, baroque, surrealism, and more
+- **52 visual styles** — comics, anime, Pixar, film-noir, Studio Ghibli, baroque, surrealism, steampunk, voxel, glitch-art, and more
 - **Comics page composer** — lay out generated images into print-ready comics pages with AI-written dialog
 - **Cost tracking** — live cost estimates and per-session totals
 
@@ -267,6 +267,26 @@ Available for both CLI (`--style`) and web UI.
 | `isometric` | Clean isometric 3D illustration — precise 30° geometric perspective, flat pastel or bold colors, architectural cross-section, video-game diorama look |
 | `surrealism` | Dalí / Magritte surrealist painting — photorealistic rendering of impossible dreamlike scenes, melting forms, impossible scale, uncanny juxtapositions |
 | `golden-age` | Golden Age of American illustration — Norman Rockwell / N.C. Wyeth warm storytelling, rich earthy palette, heroic figures, magazine-cover narrative craft |
+| `steampunk` | Victorian-era steampunk — brass and copper clockwork machinery, exposed gears, leather and brass goggles, dirigibles, industrial-fantasy invention |
+| `art-deco` | Art Deco — 1920s-30s geometric glamour, symmetrical gold and black lacquer patterns, streamlined luxury, Gatsby-era elegance |
+| `cubism` | Cubist painting — Picasso/Braque fragmented multi-perspective geometric planes, flattened abstracted forms, muted earthy palette |
+| `origami` | Origami paper-craft — folded paper geometry, crisp creases, matte paper texture, miniature paper diorama world |
+| `mosaic` | Byzantine mosaic — tessellated glass and gold tiles, sacred iconography, flat gilded backgrounds, ancient basilica art |
+| `voxel` | Voxel art — blocky cube-based 3D world, Minecraft-style low-detail geometry, bright flat-shaded cubic blocks |
+| `risograph` | Risograph print — limited 2-3 color screenprint, visible halftone grain, slight color misregistration, indie zine poster aesthetic |
+| `blueprint` | Technical blueprint — white line schematic drawings on cyan background, engineering annotations, precise draftsman diagram |
+| `tilt-shift` | Tilt-shift miniature photography — shallow selective focus, oversaturated colors, everything appears toy-scale and diorama-like |
+| `graffiti` | Urban graffiti — spray-paint wildstyle lettering, drips and stencils, brick and concrete wall backdrop, street art energy |
+| `egyptian` | Ancient Egyptian tomb art — flat profile figures, hieroglyphic symbols, gold and lapis palette, papyrus-scroll composition |
+| `illuminated-manuscript` | Medieval illuminated manuscript — gold leaf detailing, ornate decorated initials, dense border filigree, aged parchment texture |
+| `felt-craft` | Needle-felted wool craft — fuzzy fiber texture, soft rounded handmade shapes, plush toy-like charm, cozy pastel palette |
+| `holographic` | Holographic iridescent foil — rainbow chrome sheen, prismatic light refraction, futuristic metallic surfaces shifting color |
+| `aboriginal-dot` | Aboriginal Australian dot painting — dense stippled dot patterns, ochre earth-tone palette, symbolic dreamtime iconography |
+| `line-art` | Continuous single-line art — one unbroken minimalist contour line, no shading or color, elegant negative space |
+| `brutalist` | Brutalist architecture photography — stark raw concrete monoliths, monochrome heavy geometric forms, imposing scale |
+| `glitch-art` | Digital glitch art — datamosh corruption, RGB channel split, scan-line tearing, VHS signal noise artifacts |
+| `paper-cut` | Layered paper-cut art — hand-cut silhouette layers, shadow-box depth, clean colored cardstock, crisp die-cut edges |
+| `tarot` | Mystical tarot card illustration — ornate symbolic borders, esoteric iconography, rich jewel tones, arcane engraved detail |
 | `celeb-selfie` | Raw candid iPhone selfie with a famous person — photographic realism, phone flash, ISO grain. **Requires `--character-name`** |
 | `behind-the-scenes` | Raw on-set snapshot — handheld camera, ISO grain, film crew visible, harsh mixed lighting for a named movie/TV show. **Requires `--movie-title`** |
 
