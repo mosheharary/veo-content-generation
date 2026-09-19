@@ -8,7 +8,9 @@ import argparse
 import base64
 import os
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
@@ -23,6 +25,9 @@ load_dotenv()
 TEXT_MODEL = "gemini-3.1-pro-preview"
 IMAGE_MODEL = "gemini-3.1-flash-image-preview"
 VEO_MODEL = "veo-3.1-generate-preview"
+
+# Max simultaneous image generations when fanning out a multi-image storyboard.
+IMAGE_CONCURRENCY = 5
 
 # Style definitions — each style has prompt injections for initial and continuation frames.
 # "comics" also includes a dialog_field that asks the IMAGE model to render speech bubbles.
@@ -496,6 +501,295 @@ STYLE_DEFINITIONS = {
         ),
         "dialog_field": "",
     },
+    "steampunk": {
+        "description": "Victorian-era steampunk — brass and copper clockwork machinery, exposed gears, leather and brass goggles, dirigibles, industrial-fantasy invention.",
+        "init_note": (
+            "The image MUST be in a Victorian-era steampunk style: intricate brass and copper clockwork machinery, "
+            "exposed gears and pistons, leather straps and brass goggles, riveted metal plating, "
+            "steam-powered dirigibles and mechanical contraptions, warm sepia and bronze tones. "
+            'Set "aesthetics.style" to "steampunk, brass and copper clockwork, Victorian industrial, sepia bronze tones" '
+            "and reflect this throughout all other fields.\n"
+        ),
+        "cont_note": (
+            "Maintain the steampunk style: brass and copper clockwork machinery, exposed gears, Victorian industrial sepia tones.\n"
+        ),
+        "dialog_field": "",
+    },
+    "art-deco": {
+        "description": "Art Deco — 1920s-30s geometric glamour, symmetrical gold and black lacquer patterns, streamlined luxury, Gatsby-era elegance.",
+        "init_note": (
+            "The image MUST be in an Art Deco style: bold symmetrical geometric patterns, sunburst and chevron motifs, "
+            "gold and black lacquer surfaces, streamlined luxurious forms, metallic accents, "
+            "1920s-1930s Gatsby-era elegance. "
+            'Set "aesthetics.style" to "Art Deco, geometric symmetry, gold and black, streamlined luxury, Gatsby era" '
+            "and reflect this throughout all other fields.\n"
+        ),
+        "cont_note": (
+            "Maintain the Art Deco style: symmetrical geometric patterns, gold and black lacquer, streamlined 1920s luxury.\n"
+        ),
+        "dialog_field": "",
+    },
+    "cubism": {
+        "description": "Cubist painting — Picasso/Braque fragmented multi-perspective geometric planes, flattened abstracted forms, muted earthy palette.",
+        "init_note": (
+            "The image MUST be in a Cubist painting style inspired by Picasso and Braque: subjects fragmented into "
+            "flattened geometric planes shown from multiple perspectives simultaneously, abstracted overlapping "
+            "angular shapes, muted earthy palette of ochre, gray and brown with occasional bold accent. "
+            'Set "aesthetics.style" to "Cubism, Picasso/Braque, fragmented geometric planes, multiple perspectives, abstracted" '
+            "and reflect this throughout all other fields.\n"
+        ),
+        "cont_note": (
+            "Maintain the Cubist style: fragmented geometric planes, multiple simultaneous perspectives, muted earthy abstracted forms.\n"
+        ),
+        "dialog_field": "",
+    },
+    "origami": {
+        "description": "Origami paper-craft — folded paper geometry, crisp creases, matte paper texture, miniature paper diorama world.",
+        "init_note": (
+            "The image MUST look like it is made entirely of folded origami paper: crisp geometric creases and fold "
+            "lines on every surface, matte colored paper texture with visible paper thickness at edges, angular "
+            "faceted forms built from folds, a miniature handmade paper diorama world. "
+            'Set "aesthetics.style" to "origami paper-craft, folded creases, matte paper texture, geometric diorama" '
+            "and reflect this throughout all other fields.\n"
+        ),
+        "cont_note": (
+            "Maintain the origami paper-craft style: crisp folded creases, matte paper texture, angular faceted paper forms.\n"
+        ),
+        "dialog_field": "",
+    },
+    "mosaic": {
+        "description": "Byzantine mosaic — tessellated glass and gold tiles, sacred iconography, flat gilded backgrounds, ancient basilica art.",
+        "init_note": (
+            "The image MUST be rendered as a Byzantine mosaic: thousands of small tessellated glass and gold tiles "
+            "(tesserae) forming the image, visible grout lines between tiles, flat gilded gold backgrounds, sacred "
+            "iconographic composition, jewel-toned tesserae in deep blues, greens and reds, reminiscent of ancient "
+            "basilica wall art. "
+            'Set "aesthetics.style" to "Byzantine mosaic, tessellated tiles, gold leaf background, sacred iconography" '
+            "and reflect this throughout all other fields.\n"
+        ),
+        "cont_note": (
+            "Maintain the Byzantine mosaic style: tessellated glass and gold tiles, visible grout lines, flat gilded backgrounds.\n"
+        ),
+        "dialog_field": "",
+    },
+    "voxel": {
+        "description": "Voxel art — blocky cube-based 3D world, Minecraft-style low-detail geometry, bright flat-shaded cubic blocks.",
+        "init_note": (
+            "The image MUST be in a voxel art style: the entire scene built from uniform cubic blocks (voxels), "
+            "blocky low-detail geometry with no curves, flat-shaded bright colors per block face, "
+            "Minecraft-inspired chunky 3D world aesthetic. "
+            'Set "aesthetics.style" to "voxel art, blocky cubes, Minecraft-style, flat-shaded 3D blocks" '
+            "and reflect this throughout all other fields.\n"
+        ),
+        "cont_note": (
+            "Maintain the voxel art style: blocky cube-based geometry, flat-shaded block colors, Minecraft-inspired world.\n"
+        ),
+        "dialog_field": "",
+    },
+    "risograph": {
+        "description": "Risograph print — limited 2-3 color screenprint, visible halftone grain, slight color misregistration, indie zine poster aesthetic.",
+        "init_note": (
+            "The image MUST look like a Risograph screen print: limited palette of only 2-3 flat spot colors "
+            "overlaid with visible halftone dot grain, slight registration offset between color layers, soft ink "
+            "texture with visible paper grain, indie zine/poster print aesthetic. "
+            'Set "aesthetics.style" to "Risograph print, limited spot colors, halftone grain, misregistration, zine poster" '
+            "and reflect this throughout all other fields.\n"
+        ),
+        "cont_note": (
+            "Maintain the Risograph print style: limited spot colors, halftone grain texture, slight color misregistration.\n"
+        ),
+        "dialog_field": "",
+    },
+    "blueprint": {
+        "description": "Technical blueprint — white line schematic drawings on cyan background, engineering annotations, precise draftsman diagram.",
+        "init_note": (
+            "The image MUST look like a technical engineering blueprint: crisp white line drawings on a solid "
+            "cyan-blue background, precise draftsman-style linework with construction guides, dimension lines and "
+            "small numeric annotations, orthographic/schematic diagram feel, no color other than white lines and "
+            "cyan background. "
+            'Set "aesthetics.style" to "technical blueprint, white lines on cyan, engineering schematic, draftsman diagram" '
+            "and reflect this throughout all other fields.\n"
+        ),
+        "cont_note": (
+            "Maintain the blueprint style: white line schematic drawing on cyan background, draftsman annotations.\n"
+        ),
+        "dialog_field": "",
+    },
+    "tilt-shift": {
+        "description": "Tilt-shift miniature photography — shallow selective focus, oversaturated colors, everything appears toy-scale and diorama-like.",
+        "init_note": (
+            "The image MUST have a tilt-shift miniature photography effect: extremely shallow selective focus with "
+            "a sharp thin band and heavily blurred foreground/background, oversaturated punchy colors, elevated "
+            "wide-angle vantage point looking down, making real-scale subjects appear like tiny toy models in a "
+            "miniature diorama. "
+            'Set "aesthetics.style" to "tilt-shift miniature photography, selective focus, toy-scale diorama, oversaturated" '
+            "and reflect this throughout all other fields.\n"
+        ),
+        "cont_note": (
+            "Maintain the tilt-shift miniature style: shallow selective focus, oversaturated colors, toy-scale diorama look.\n"
+        ),
+        "dialog_field": "",
+    },
+    "graffiti": {
+        "description": "Urban graffiti — spray-paint wildstyle lettering, drips and stencils, brick and concrete wall backdrop, street art energy.",
+        "init_note": (
+            "The image MUST be in an urban graffiti street art style: bold spray-paint wildstyle lettering and "
+            "characters, visible paint drips and overspray, stencil elements, layered tags, gritty brick or concrete "
+            "wall backdrop, vibrant clashing spray-can colors with hard black outlines. "
+            'Set "aesthetics.style" to "urban graffiti, spray-paint wildstyle, stencil, brick wall backdrop, street art" '
+            "and reflect this throughout all other fields.\n"
+        ),
+        "cont_note": (
+            "Maintain the graffiti street art style: spray-paint wildstyle lettering, paint drips, brick/concrete wall backdrop.\n"
+        ),
+        "dialog_field": "",
+    },
+    "egyptian": {
+        "description": "Ancient Egyptian tomb art — flat profile figures, hieroglyphic symbols, gold and lapis palette, papyrus-scroll composition.",
+        "init_note": (
+            "The image MUST be in an ancient Egyptian tomb wall painting style: figures shown in flat profile with "
+            "frontal shoulders per Egyptian canon, surrounding hieroglyphic symbols and cartouches, gold, lapis blue, "
+            "terracotta and turquoise palette, papyrus-scroll registers and border bands, flat two-dimensional "
+            "composition with no perspective depth. "
+            'Set "aesthetics.style" to "ancient Egyptian tomb art, hieroglyphics, flat profile figures, gold and lapis palette" '
+            "and reflect this throughout all other fields.\n"
+        ),
+        "cont_note": (
+            "Maintain the ancient Egyptian tomb art style: flat profile figures, hieroglyphic symbols, gold and lapis palette.\n"
+        ),
+        "dialog_field": "",
+    },
+    "illuminated-manuscript": {
+        "description": "Medieval illuminated manuscript — gold leaf detailing, ornate decorated initials, dense border filigree, aged parchment texture.",
+        "init_note": (
+            "The image MUST be in a medieval illuminated manuscript style: shimmering gold leaf highlights and "
+            "halos, ornate decorated capital-letter-style border filigree with intertwined vines, densely patterned "
+            "marginalia, rich jewel-toned pigments on aged cream parchment texture, flattened stylized medieval "
+            "figures. "
+            'Set "aesthetics.style" to "illuminated manuscript, gold leaf, ornate filigree border, medieval parchment" '
+            "and reflect this throughout all other fields.\n"
+        ),
+        "cont_note": (
+            "Maintain the illuminated manuscript style: gold leaf highlights, ornate filigree borders, aged parchment texture.\n"
+        ),
+        "dialog_field": "",
+    },
+    "felt-craft": {
+        "description": "Needle-felted wool craft — fuzzy fiber texture, soft rounded handmade shapes, plush toy-like charm, cozy pastel palette.",
+        "init_note": (
+            "The image MUST look like a needle-felted wool craft object: visible fuzzy wool fiber texture on every "
+            "surface, soft rounded simplified handmade shapes, tiny felting-needle indentations, plush toy-like "
+            "charm, cozy soft pastel color palette, photographed on a simple textured fabric backdrop. "
+            'Set "aesthetics.style" to "needle-felted wool craft, fuzzy fiber texture, plush handmade, pastel palette" '
+            "and reflect this throughout all other fields.\n"
+        ),
+        "cont_note": (
+            "Maintain the needle-felted wool craft style: fuzzy fiber texture, soft rounded handmade shapes, pastel palette.\n"
+        ),
+        "dialog_field": "",
+    },
+    "holographic": {
+        "description": "Holographic iridescent foil — rainbow chrome sheen, prismatic light refraction, futuristic metallic surfaces shifting color.",
+        "init_note": (
+            "The image MUST have a holographic iridescent foil aesthetic: rainbow chrome sheen rippling across "
+            "every surface, prismatic light refraction splitting into spectral colors, glossy metallic reflective "
+            "highlights, futuristic surfaces that appear to shift hue depending on angle, sleek high-gloss finish. "
+            'Set "aesthetics.style" to "holographic iridescent foil, rainbow chrome, prismatic refraction, glossy futuristic" '
+            "and reflect this throughout all other fields.\n"
+        ),
+        "cont_note": (
+            "Maintain the holographic iridescent style: rainbow chrome sheen, prismatic refraction, glossy metallic futuristic surfaces.\n"
+        ),
+        "dialog_field": "",
+    },
+    "aboriginal-dot": {
+        "description": "Aboriginal Australian dot painting — dense stippled dot patterns, ochre earth-tone palette, symbolic dreamtime iconography.",
+        "init_note": (
+            "The image MUST be in an Aboriginal Australian dot painting style: dense fields of carefully placed "
+            "stippled dots forming patterns and figures, warm ochre earth-tone palette (rust red, sandy yellow, "
+            "black, white), symbolic dreamtime iconography with concentric circles and totemic motifs, flattened "
+            "aerial-map-like composition on a dark ochre ground. "
+            'Set "aesthetics.style" to "Aboriginal dot painting, stippled dots, ochre earth tones, dreamtime iconography" '
+            "and reflect this throughout all other fields.\n"
+        ),
+        "cont_note": (
+            "Maintain the Aboriginal dot painting style: stippled dot patterns, ochre earth-tone palette, symbolic dreamtime motifs.\n"
+        ),
+        "dialog_field": "",
+    },
+    "line-art": {
+        "description": "Continuous single-line art — one unbroken minimalist contour line, no shading or color, elegant negative space.",
+        "init_note": (
+            "The image MUST be rendered as continuous single-line art: the entire subject drawn with one unbroken, "
+            "elegantly flowing contour line of consistent thickness, pure white or cream background, no shading, "
+            "no fill color, no cross-hatching — only the single continuous line and the negative space it creates. "
+            'Set "aesthetics.style" to "continuous single-line art, minimalist contour, unbroken line, negative space" '
+            "and reflect this throughout all other fields.\n"
+        ),
+        "cont_note": (
+            "Maintain the continuous single-line style: one unbroken contour line, no shading or color, minimalist negative space.\n"
+        ),
+        "dialog_field": "",
+    },
+    "brutalist": {
+        "description": "Brutalist architecture photography — stark raw concrete monoliths, monochrome heavy geometric forms, imposing scale.",
+        "init_note": (
+            "The image MUST have a Brutalist architecture photography style: stark raw poured-concrete monolithic "
+            "forms, heavy repetitive geometric massing, imposing monumental scale shot from a low dramatic angle, "
+            "near-monochrome gray palette with harsh directional daylight and deep shadows, minimal human presence "
+            "emphasizing scale. "
+            'Set "aesthetics.style" to "Brutalist architecture photography, raw concrete, monochrome, monumental geometric scale" '
+            "and reflect this throughout all other fields.\n"
+        ),
+        "cont_note": (
+            "Maintain the Brutalist architecture style: raw concrete monoliths, monochrome palette, imposing geometric scale.\n"
+        ),
+        "dialog_field": "",
+    },
+    "glitch-art": {
+        "description": "Digital glitch art — datamosh corruption, RGB channel split, scan-line tearing, VHS signal noise artifacts.",
+        "init_note": (
+            "The image MUST have a digital glitch art aesthetic: datamosh-style pixel corruption and smearing, "
+            "RGB channel split with visible red/cyan offset ghosting, horizontal scan-line tearing and displacement, "
+            "VHS signal noise and static bands, harsh digital compression artifacts layered over the scene. "
+            'Set "aesthetics.style" to "digital glitch art, datamosh, RGB channel split, VHS signal noise" '
+            "and reflect this throughout all other fields.\n"
+        ),
+        "cont_note": (
+            "Maintain the digital glitch art style: datamosh corruption, RGB channel split, VHS scan-line noise artifacts.\n"
+        ),
+        "dialog_field": "",
+    },
+    "paper-cut": {
+        "description": "Layered paper-cut art — hand-cut silhouette layers, shadow-box depth, clean colored cardstock, crisp die-cut edges.",
+        "init_note": (
+            "The image MUST look like layered hand-cut paper art: multiple silhouette layers of clean colored "
+            "cardstock cut with crisp precise edges, stacked with visible depth like a shadow-box diorama, soft "
+            "cast shadows between layers showing physical separation, flat matte paper color with no texture beyond "
+            "the paper itself. "
+            'Set "aesthetics.style" to "layered paper-cut art, silhouette shadow-box, die-cut cardstock, flat matte color" '
+            "and reflect this throughout all other fields.\n"
+        ),
+        "cont_note": (
+            "Maintain the paper-cut style: layered cardstock silhouettes, shadow-box depth, crisp die-cut edges.\n"
+        ),
+        "dialog_field": "",
+    },
+    "tarot": {
+        "description": "Mystical tarot card illustration — ornate symbolic borders, esoteric iconography, rich jewel tones, arcane engraved detail.",
+        "init_note": (
+            "The image MUST be in a mystical tarot card illustration style: ornate symmetrical decorative border "
+            "framing the scene like a tarot card, dense esoteric iconography (celestial bodies, sacred geometry, "
+            "symbolic creatures), rich jewel-toned colors with gold engraved linework, flattened stylized figures in "
+            "ritualistic poses, arcane mysterious atmosphere. "
+            'Set "aesthetics.style" to "mystical tarot card illustration, ornate border, esoteric iconography, gold engraved linework" '
+            "and reflect this throughout all other fields.\n"
+        ),
+        "cont_note": (
+            "Maintain the tarot card illustration style: ornate decorative border, esoteric iconography, jewel tones with gold linework.\n"
+        ),
+        "dialog_field": "",
+    },
     "celeb-selfie": {
         "description": "Raw candid iPhone selfie with a famous person — photographic realism, phone flash, ISO grain. Requires --character-name.",
         "requires_character_name": True,
@@ -570,28 +864,37 @@ IMAGE_OUTPUT_PRICE_PER_M = 60.00  # image output tokens
 
 
 class CostTracker:
-    """Accumulates cost across all API calls in a session."""
+    """Accumulates cost across all API calls in a session.
+
+    Guarded by a lock since image generation can now fan out across worker
+    threads (see generate_images_parallel) that all report cost concurrently.
+    """
 
     def __init__(self):
         self.items = []  # list of (label, cost)
+        self._lock = threading.Lock()
 
     def add_video(self, seconds, resolution):
         price = VEO_PRICE_PER_SEC.get(resolution, 0.40)
         cost = seconds * price
-        self.items.append((f"Video {seconds}s @ {resolution}", cost))
+        with self._lock:
+            self.items.append((f"Video {seconds}s @ {resolution}", cost))
 
     def add_text(self, input_tokens, output_tokens, label="Extension prompts"):
         cost = (input_tokens / 1_000_000 * TEXT_INPUT_PRICE_PER_M +
                 output_tokens / 1_000_000 * TEXT_OUTPUT_PRICE_PER_M)
-        self.items.append((label, cost))
+        with self._lock:
+            self.items.append((label, cost))
 
     def add_image(self, input_tokens, output_tokens, label="Reference image"):
         cost = (input_tokens / 1_000_000 * IMAGE_INPUT_PRICE_PER_M +
                 output_tokens / 1_000_000 * IMAGE_OUTPUT_PRICE_PER_M)
-        self.items.append((label, cost))
+        with self._lock:
+            self.items.append((label, cost))
 
     def total(self):
-        return sum(c for _, c in self.items)
+        with self._lock:
+            return sum(c for _, c in self.items)
 
     def print_summary(self):
         if not self.items:
@@ -887,6 +1190,39 @@ def generate_image_variation(client, json_prompt, reference_image_path, output_d
                 f.write(part.inline_data.data)
             return image_path
     raise RuntimeError("Image generation produced no image output")
+
+
+def generate_images_parallel(client, indexed_prompts, reference_image_path, output_dir,
+                              cost_tracker=None, max_workers=IMAGE_CONCURRENCY):
+    """Generate multiple storyboard images concurrently against one shared reference image.
+
+    indexed_prompts: iterable of (index, json_prompt) pairs. Each image is written to
+    output_dir / f"image_{index}.png" via generate_image_variation, so results never
+    collide on a filename regardless of completion order.
+
+    Yields (index, path, error) tuples as each generation completes — NOT in submission
+    order — so a caller can upload/persist each image while the rest are still in flight.
+    A failed image yields (index, None, exception) and never aborts the remaining workers.
+    """
+    indexed_prompts = list(indexed_prompts)
+    if not indexed_prompts:
+        return
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_index = {
+            executor.submit(
+                generate_image_variation,
+                client, json_prompt, reference_image_path, output_dir,
+                f"image_{idx}.png", cost_tracker,
+            ): idx
+            for idx, json_prompt in indexed_prompts
+        }
+        for future in as_completed(future_to_index):
+            idx = future_to_index[future]
+            try:
+                path = future.result()
+                yield idx, path, None
+            except Exception as e:
+                yield idx, None, e
 
 
 def render_images_as_html(image_paths: list, output_dir: Path, title: str = "Generated Images") -> Path:
@@ -1802,29 +2138,39 @@ def cmd_generate(client, args):
                 client, first_json, output_dir, filename=first_filename, cost_tracker=cost
             )
         print(f"   Image 1 saved to: {prev_image_path}")
-        prev_json = first_json
-        all_image_paths = [prev_image_path]
-        all_prompt_jsons = [first_json]
+        anchor_image_path = prev_image_path
+        prompt_jsons = {1: first_json}
 
-        # Generate images 2-N: each prompt continues from previous, each image uses previous image as reference
+        # Generate prompts 2..N sequentially — each continues from the previous one so the
+        # storyboard reads as one narrative. This is cheap text-only work, so it stays serial.
+        prev_json = first_json
         for i in range(2, n + 1):
             print(f"\nGenerating image prompt {i} using {TEXT_MODEL} (continues from prompt {i - 1})...")
             next_json = generate_continuation_prompt_json(client, prev_json, cost_tracker=cost, style=args.style, movie_name=movie_name, character_name=character_name)
             (output_dir / f"image_prompt_{i}.json").write_text(next_json)
             print(f"   Prompt {i} saved to: {output_dir / f'image_prompt_{i}.json'}")
-            print(f"\n--- JSON used for image_{i}.png ---")
-            print(next_json)
-            print(f"---")
-
-            print(f"Generating image {i} using {IMAGE_MODEL} (based on image {i - 1})...")
-            img_path = generate_image_variation(
-                client, next_json, prev_image_path, output_dir, f"image_{i}.png", cost_tracker=cost
-            )
-            print(f"   Image {i} saved to: {img_path}")
+            prompt_jsons[i] = next_json
             prev_json = next_json
-            prev_image_path = img_path
-            all_image_paths.append(img_path)
-            all_prompt_jsons.append(next_json)
+
+        # Generate images 2..N concurrently (IMAGE_CONCURRENCY at a time), all referencing
+        # image 1 as the shared style anchor — this is the fan-out step, so completions may
+        # print out of numeric order.
+        results = {1: anchor_image_path}
+        if n > 1:
+            print(f"\nGenerating images 2-{n} using {IMAGE_MODEL} "
+                  f"({min(IMAGE_CONCURRENCY, n - 1)} at a time, referencing image 1)...")
+            for idx, img_path, err in generate_images_parallel(
+                client, [(i, prompt_jsons[i]) for i in range(2, n + 1)],
+                anchor_image_path, output_dir, cost_tracker=cost,
+            ):
+                if err:
+                    print(f"   Image {idx} FAILED: {err}")
+                    continue
+                print(f"   Image {idx} saved to: {img_path}")
+                results[idx] = img_path
+
+        all_image_paths = [results[i] for i in sorted(results)]
+        all_prompt_jsons = [prompt_jsons[i] for i in sorted(results)]
 
         # Compose comics pages if requested — always generate dialog
         if args.comics and len(all_image_paths) > 0:

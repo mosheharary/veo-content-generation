@@ -1,7 +1,9 @@
 import tempfile
+import threading
 import time
 import os
 import shutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import streamlit as st
@@ -21,17 +23,19 @@ class TraceCollector:
         self._traces: list[dict] = []
         self._start = time.time()
         self._counter = 0
+        self._lock = threading.Lock()
 
     def add(self, step_name: str, status: str, message: str = "", metadata: dict | None = None):
-        self._counter += 1
-        self._traces.append({
-            "step_number":   self._counter,
-            "step_name":     step_name,
-            "status":        status,
-            "message":       message,
-            "metadata_json": metadata or {},
-            "elapsed_sec":   round(time.time() - self._start, 2),
-        })
+        with self._lock:
+            self._counter += 1
+            self._traces.append({
+                "step_number":   self._counter,
+                "step_name":     step_name,
+                "status":        status,
+                "message":       message,
+                "metadata_json": metadata or {},
+                "elapsed_sec":   round(time.time() - self._start, 2),
+            })
         print(f"[TRACE] {step_name} - {status} ({message}) | metadata: {metadata or {}}")
 
     def flush(self, db_session, generation_id: str):
@@ -141,6 +145,8 @@ from veo import (
     generate_image_variation,
     compose_comics_pages,
     generate_comics_dialog,
+    generate_images_parallel,
+    IMAGE_CONCURRENCY,
     optimal_panels_per_page,
     extract_last_frame,
 )
@@ -217,6 +223,16 @@ def check_api_key():
     if st.session_state.get("google_api_key"):
         return True
 
+    # Match the documented resolution order (see CLAUDE.md): a key configured in
+    # .streamlit/secrets.toml is used automatically, skipping the per-session prompt.
+    try:
+        secrets_key = st.secrets.get("GOOGLE_API_KEY")
+    except Exception:
+        secrets_key = None
+    if secrets_key:
+        st.session_state["google_api_key"] = secrets_key
+        return True
+
     st.title("Veo 3.1 Media Generator")
     st.subheader("Enter your Google API key")
     st.caption("Your key is used only for this session and is never stored.")
@@ -253,21 +269,43 @@ if nav_choice == "History":
         user_id = st.session_state.get("user_id")
         if user_id:
             from db import Session, Generation
+
+            def _generation_sort_key(gen):
+                # A multi-image run commits its images out of completion order (they're
+                # generated in parallel), so order the gallery by the stored frame index
+                # instead of relying on insertion/created_at order. index may be an int
+                # (storyboard frame), a style name, or a "comic_page_N" string.
+                idx = (gen.metadata_json or {}).get("index")
+                if isinstance(idx, int):
+                    return (0, idx, gen.created_at)
+                if isinstance(idx, str):
+                    return (1, idx, gen.created_at)
+                return (2, "", gen.created_at)
+
             sessions = db_session.query(Session).filter(Session.user_id == user_id).order_by(Session.created_at.desc()).all()
             if not sessions:
                 st.info("You haven't generated anything yet.")
-            
+
             for s in sessions:
                 with st.expander(f"{s.session_name} - {s.created_at.strftime('%Y-%m-%d %H:%M')}"):
                     st.write(f"**Total Cost:** ${s.total_cost:.4f}")
-                    for gen in s.generations:
-                        st.markdown(f"**Prompt:** {gen.prompt}")
-                        if gen.media_url:
-                            if gen.gen_type == 'video':
-                                st.video(gen.media_url)
-                            else:
-                                st.image(gen.media_url)
-                        st.divider()
+                    gens = sorted(s.generations, key=_generation_sort_key)
+                    if gens:
+                        st.markdown(f"**Prompt:** {gens[0].prompt}")
+
+                    video_gens = [g for g in gens if g.gen_type == 'video' and g.media_url]
+                    for gen in video_gens:
+                        st.video(gen.media_url)
+
+                    # A multi-image run produces one Generation row per image; show them
+                    # together in a grid instead of one-per-line so a 6-image run still
+                    # reads as a single entry.
+                    media_gens = [g for g in gens if g.gen_type != 'video' and g.media_url]
+                    if media_gens:
+                        cols = st.columns(3)
+                        for i, gen in enumerate(media_gens):
+                            cols[i % 3].image(gen.media_url)
+                    st.divider()
     finally:
         db_session.close()
     
@@ -667,6 +705,13 @@ if _do_generate:
     cost_tracker = CostTracker()
     tracer = TraceCollector()
 
+    # Set up (only populated for Image Only / comics — see _persist_image below) so each
+    # generated image can be uploaded to Cloudinary and committed to the DB as soon as it
+    # exists, instead of waiting for the whole batch to finish.
+    db_session = None
+    parent_session_id = None
+    persisted_generation_ids = []
+
     # Clean previous state
     generated_prompts = []
     for key in ["video_bytes", "images", "comics_images", "last_prompt", "generated_prompts"]:
@@ -895,14 +940,81 @@ if _do_generate:
                     "has_reference_image": tmp_image_path is not None,
                 })
 
+                # Phase 0 — set up Cloudinary + a parent DB Session row up front so every
+                # image generated below can be uploaded and committed to its own Generation
+                # row as soon as it exists, instead of waiting for the whole batch to finish.
+                # A DB/Cloudinary outage here must not block generation itself.
+                try:
+                    cloudinary_utils.init_cloudinary()
+                    user_id = st.session_state.get("user_id")
+                    if user_id:
+                        db_session = db.get_session()
+                        from datetime import datetime
+                        session_name = (
+                            f"{'Comics' if _is_comics else 'Image'} Gen - "
+                            f"{datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                        )
+                        parent_db_session = db.Session(
+                            user_id=user_id, session_name=session_name, total_cost=0.0
+                        )
+                        db_session.add(parent_db_session)
+                        db_session.flush()
+                        parent_session_id = parent_db_session.id
+                except Exception as e:
+                    print(f"Error setting up persistence: {e}")
+                    db_session = None
+                    parent_session_id = None
+
+                def _persist_image(index, path, gen_type="image", extra_metadata=None):
+                    """Upload one image to Cloudinary and commit its own Generation row
+                    immediately. Runs on the main thread only (Cloudinary/DB/Streamlit are
+                    not thread-safe). A failure here is logged and traced but never aborts
+                    the rest of the batch."""
+                    if not (db_session and parent_session_id):
+                        return None
+                    try:
+                        cloud_url = cloudinary_utils.upload_file_to_cloudinary(
+                            str(path), resource_type="image"
+                        )
+                        if not cloud_url:
+                            tracer.add(f"upload_image_{index}", "failed",
+                                       message="Cloudinary upload returned no URL")
+                            return None
+                        tracer.add(f"upload_image_{index}", "completed", metadata={"url": cloud_url})
+                        metadata = {"index": index, "total_images": total_images, "aspect_ratio": "16:9"}
+                        if extra_metadata:
+                            metadata.update(extra_metadata)
+                        new_gen = db.Generation(
+                            session_id=parent_session_id,
+                            gen_type=gen_type,
+                            prompt=prompt,
+                            metadata_json=metadata,
+                            media_url=cloud_url,
+                        )
+                        db_session.add(new_gen)
+                        db_session.commit()
+                        persisted_generation_ids.append(new_gen.id)
+                        tracer.add(f"save_to_db_{index}", "completed",
+                                   metadata={"generation_id": new_gen.id})
+                        return cloud_url
+                    except Exception as e:
+                        print(f"Error persisting image {index}: {e}")
+                        tracer.add(f"persist_image_{index}", "failed", message=str(e))
+                        return None
+
                 if style_val == "all":
-                    status.write(f"Generating images for all {len(STYLE_DEFINITIONS)} styles...")
-                    all_style_paths = []
+                    style_names = [
+                        s for s in STYLE_DEFINITIONS.keys()
+                        if not (STYLE_DEFINITIONS.get(s, {}).get("requires_movie_name") or
+                                STYLE_DEFINITIONS.get(s, {}).get("requires_character_name"))
+                    ]
                     for s_name in STYLE_DEFINITIONS.keys():
-                        if STYLE_DEFINITIONS.get(s_name, {}).get("requires_movie_name") or \
-                           STYLE_DEFINITIONS.get(s_name, {}).get("requires_character_name"):
+                        if s_name not in style_names:
                             status.write(f"Skipping {s_name} — requires additional parameter")
-                            continue
+
+                    # Phase 1 — one prompt per style, sequential (cheap text calls).
+                    style_prompts = {}
+                    for s_name in style_names:
                         s_dir = out_dir / s_name
                         s_dir.mkdir()
                         try:
@@ -911,31 +1023,50 @@ if _do_generate:
                             img_json = generate_image_prompt_json(
                                 client, prompt, cost_tracker, style=s_name
                             )
-                            generated_prompts.append(img_json)
+                            style_prompts[s_name] = img_json
                             tracer.add(f"generate_prompt_{s_name}", "completed")
-                            if tmp_image_path:
-                                tracer.add(f"generate_image_{s_name}", "started",
-                                           metadata={"with_reference": True})
-                                status.write(f"Generating image for {s_name} (with reference)...")
-                                img_path = generate_image_from_reference(
-                                    client, img_json, tmp_image_path, s_dir, cost_tracker
-                                )
-                            else:
-                                tracer.add(f"generate_image_{s_name}", "started")
-                                status.write(f"Generating image for {s_name}...")
-                                img_path = generate_image_from_text(
-                                    client,
-                                    img_json,
-                                    s_dir,
-                                    filename="image.png",
-                                    cost_tracker=cost_tracker,
-                                )
-                            all_style_paths.append(img_path)
-                            tracer.add(f"generate_image_{s_name}", "completed",
-                                       metadata={"output_path": str(img_path)})
                         except Exception as e:
-                            tracer.add(f"generate_image_{s_name}", "failed", message=str(e))
-                            status.write(f"Failed {s_name}: {e}")
+                            tracer.add(f"generate_prompt_{s_name}", "failed", message=str(e))
+                            status.write(f"Failed to generate prompt for {s_name}: {e}")
+
+                    # Phase 2 — fan out image generation across styles, IMAGE_CONCURRENCY at
+                    # a time. Each style has its own directory, so filenames never collide.
+                    # Uploaded + committed to its own Generation row as soon as it lands.
+                    def _generate_one_style(s_name, img_json):
+                        s_dir = out_dir / s_name
+                        if tmp_image_path:
+                            return generate_image_from_reference(
+                                client, img_json, tmp_image_path, s_dir, cost_tracker
+                            )
+                        return generate_image_from_text(
+                            client, img_json, s_dir, filename="image.png", cost_tracker=cost_tracker,
+                        )
+
+                    all_style_paths = []
+                    if style_prompts:
+                        status.write(
+                            f"Generating {len(style_prompts)} images "
+                            f"({min(IMAGE_CONCURRENCY, len(style_prompts))} at a time)..."
+                        )
+                        with ThreadPoolExecutor(max_workers=IMAGE_CONCURRENCY) as executor:
+                            future_to_style = {
+                                executor.submit(_generate_one_style, s_name, img_json): s_name
+                                for s_name, img_json in style_prompts.items()
+                            }
+                            for future in as_completed(future_to_style):
+                                s_name = future_to_style[future]
+                                try:
+                                    img_path = future.result()
+                                except Exception as e:
+                                    tracer.add(f"generate_image_{s_name}", "failed", message=str(e))
+                                    status.write(f"Failed {s_name}: {e}")
+                                    continue
+                                tracer.add(f"generate_image_{s_name}", "completed",
+                                           metadata={"output_path": str(img_path)})
+                                status.write(f"{s_name} done — uploading...")
+                                all_style_paths.append(img_path)
+                                generated_prompts.append(style_prompts[s_name])
+                                _persist_image(s_name, img_path, extra_metadata={"style": s_name})
 
                     status.update(label="Done!", state="complete")
 
@@ -947,39 +1078,16 @@ if _do_generate:
                     st.session_state["images"] = images_data
 
                 else:
-                    all_image_paths = []
+                    # Phase 1 — prompts, sequential. Prompt i continues prompt i-1 so the
+                    # storyboard reads as one narrative; these are cheap text-only calls.
+                    prompt_jsons = {}
                     tracer.add("generate_prompt_1", "started")
-                    status.write(f"Generating prompt 1...")
+                    status.write("Generating prompt 1...")
                     prev_json = generate_image_prompt_json(
                         client, prompt, cost_tracker, style=style_val, movie_name=movie_name_val, character_name=character_name_val
                     )
-                    generated_prompts.append(prev_json)
+                    prompt_jsons[1] = prev_json
                     tracer.add("generate_prompt_1", "completed")
-
-                    if tmp_image_path:
-                        tracer.add("generate_image_1", "started", metadata={"with_reference": True})
-                        status.write(f"Generating image 1 (with reference)...")
-                        prev_image_path = generate_image_from_reference(
-                            client, prev_json, tmp_image_path, out_dir, cost_tracker
-                        )
-                        final_path = out_dir / ("image_1.png" if total_images > 1 else "image.png")
-                        prev_image_path.rename(final_path)
-                        prev_image_path = final_path
-                    else:
-                        tracer.add("generate_image_1", "started")
-                        status.write(f"Generating image 1...")
-                        first_filename = "image_1.png" if total_images > 1 else "image.png"
-                        prev_image_path = generate_image_from_text(
-                            client,
-                            prev_json,
-                            out_dir,
-                            filename=first_filename,
-                            cost_tracker=cost_tracker,
-                        )
-                    tracer.add("generate_image_1", "completed",
-                               metadata={"output_path": str(prev_image_path)})
-
-                    all_image_paths.append(prev_image_path)
 
                     for i in range(2, total_images + 1):
                         tracer.add(f"generate_prompt_{i}", "started")
@@ -987,23 +1095,63 @@ if _do_generate:
                         next_json = generate_continuation_prompt_json(
                             client, prev_json, cost_tracker, style=style_val, movie_name=movie_name_val, character_name=character_name_val
                         )
-                        generated_prompts.append(next_json)
+                        prompt_jsons[i] = next_json
                         tracer.add(f"generate_prompt_{i}", "completed")
-                        tracer.add(f"generate_image_{i}", "started")
-                        status.write(f"Generating image {i}...")
-                        img_path = generate_image_variation(
-                            client,
-                            next_json,
-                            prev_image_path,
-                            out_dir,
-                            f"image_{i}.png",
-                            cost_tracker,
-                        )
-                        tracer.add(f"generate_image_{i}", "completed",
-                                   metadata={"output_path": str(img_path)})
                         prev_json = next_json
-                        prev_image_path = img_path
-                        all_image_paths.append(img_path)
+
+                    # Phase 2 — anchor image (image 1), sequential; persisted immediately.
+                    # It becomes the shared style/character reference for images 2..N.
+                    tracer.add("generate_image_1", "started",
+                               metadata={"with_reference": tmp_image_path is not None})
+                    if tmp_image_path:
+                        status.write("Generating image 1 (with reference)...")
+                        anchor_path = generate_image_from_reference(
+                            client, prompt_jsons[1], tmp_image_path, out_dir, cost_tracker
+                        )
+                        final_path = out_dir / ("image_1.png" if total_images > 1 else "image.png")
+                        anchor_path.rename(final_path)
+                        anchor_path = final_path
+                    else:
+                        status.write("Generating image 1...")
+                        first_filename = "image_1.png" if total_images > 1 else "image.png"
+                        anchor_path = generate_image_from_text(
+                            client,
+                            prompt_jsons[1],
+                            out_dir,
+                            filename=first_filename,
+                            cost_tracker=cost_tracker,
+                        )
+                    tracer.add("generate_image_1", "completed", metadata={"output_path": str(anchor_path)})
+                    status.write("Image 1 done — uploading...")
+                    results = {1: anchor_path}
+                    _persist_image(1, anchor_path)
+
+                    # Phase 3 — images 2..N, fanned out IMAGE_CONCURRENCY at a time against
+                    # the shared anchor image. Each is uploaded/committed as soon as it lands,
+                    # while the rest of the batch is still generating.
+                    if total_images > 1:
+                        status.write(
+                            f"Generating images 2-{total_images} "
+                            f"({min(IMAGE_CONCURRENCY, total_images - 1)} at a time)..."
+                        )
+                        for idx, img_path, err in generate_images_parallel(
+                            client, [(i, prompt_jsons[i]) for i in range(2, total_images + 1)],
+                            anchor_path, out_dir, cost_tracker=cost_tracker, max_workers=IMAGE_CONCURRENCY,
+                        ):
+                            if err:
+                                tracer.add(f"generate_image_{idx}", "failed", message=str(err))
+                                status.write(f"Image {idx} failed: {err}")
+                                continue
+                            tracer.add(f"generate_image_{idx}", "completed",
+                                       metadata={"output_path": str(img_path)})
+                            status.write(f"Image {idx} done — uploading...")
+                            results[idx] = img_path
+                            _persist_image(idx, img_path)
+
+                    # Phase 4 — restore narrative order (parallel completion scrambles it)
+                    # before anything order-sensitive: comics composition, gallery display.
+                    all_image_paths = [results[i] for i in sorted(results)]
+                    generated_prompts = [prompt_jsons[i] for i in sorted(results)]
 
                     if comics and len(all_image_paths) > 0:
                         tracer.add("generate_comics_dialog", "started")
@@ -1020,6 +1168,9 @@ if _do_generate:
                             for p in comic_pages
                         ]
                         st.session_state["comics_images"] = comics_data
+                        for page_idx, p in enumerate(comic_pages, start=1):
+                            status.write(f"Comic page {page_idx} done — uploading...")
+                            _persist_image(f"comic_page_{page_idx}", p, gen_type="comics")
 
                     status.update(label="Done!", state="complete")
 
@@ -1033,83 +1184,25 @@ if _do_generate:
         st.session_state["cost"] = cost_tracker.total()
         st.session_state["last_prompt"] = prompt
         st.session_state["generated_prompts"] = generated_prompts
-        
-        # Save image and comic generations to Cloudinary and Neon
-        if mode == "Image Only" or _is_comics:
+
+        # Image/comics generations were already uploaded to Cloudinary and committed to
+        # their own Generation rows one at a time as each one completed (see
+        # _persist_image above) — no batch upload/save step needed here anymore. Just
+        # finalize the parent Session's total cost and flush the accumulated traces.
+        if (mode == "Image Only" or _is_comics) and db_session and parent_session_id:
             try:
-                import cloudinary_utils
-                import db
-                db_session = db.get_session()
-
-                image_urls = []
-                tracer.add("upload_cloudinary_images", "started",
-                           metadata={"num_images": len(st.session_state.get("images", []))})
-                for i_data in st.session_state.get("images", []):
-                    import tempfile
-                    import os
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-                        tmp.write(i_data["bytes"])
-                        tmp_path = tmp.name
-
-                    cloud_url = cloudinary_utils.upload_file_to_cloudinary(tmp_path, resource_type="image")
-                    if cloud_url:
-                        image_urls.append(cloud_url)
-
-                    os.unlink(tmp_path)
-
-                for i_data in st.session_state.get("comics_images", []):
-                    import tempfile
-                    import os
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-                        tmp.write(i_data["bytes"])
-                        tmp_path = tmp.name
-                    cloud_url = cloudinary_utils.upload_file_to_cloudinary(tmp_path, resource_type="image")
-                    if cloud_url:
-                        image_urls.append(cloud_url)
-                    os.unlink(tmp_path)
-                tracer.add("upload_cloudinary_images", "completed",
-                           metadata={"uploaded_count": len(image_urls), "urls": image_urls})
-
-                try:
-                    user_id = st.session_state.get("user_id")
-                    if user_id and image_urls:
-                        total_cost = st.session_state["cost"]
-
-                        from datetime import datetime
-                        session_name = f"{'Comics' if _is_comics else 'Image'} Gen - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-                        new_session = db.Session(user_id=user_id, session_name=session_name, total_cost=total_cost)
-                        db_session.add(new_session)
-                        db_session.flush()
-
-                        metadata = {
-                            "prompts": st.session_state.get("generated_prompts", []),
-                            "resolution": "16:9",
-                            "aspect_ratio": "16:9",
-                            "total_images": total_images
-                        }
-
-                        new_gen = db.Generation(
-                            session_id=new_session.id,
-                            gen_type='comics' if _is_comics else 'image',
-                            prompt=st.session_state.get("last_prompt", ""),
-                            metadata_json=metadata,
-                            media_url=image_urls[0] if image_urls else None
-                        )
-                        db_session.add(new_gen)
-                        db_session.commit()
-                        tracer.add("save_to_db", "completed",
-                                   metadata={"generation_id": new_gen.id, "total_cost": total_cost})
-                        tracer.add("generation_complete", "completed",
-                                   metadata={"total_cost": total_cost})
-                        tracer.flush(db_session, new_gen.id)
-                except Exception as e:
-                    print(f"Error saving to DB: {e}")
-                finally:
-                    db_session.close()
-
+                total_cost = st.session_state["cost"]
+                db_session.query(db.Session).filter(db.Session.id == parent_session_id).update(
+                    {"total_cost": total_cost}
+                )
+                db_session.commit()
+                tracer.add("generation_complete", "completed", metadata={"total_cost": total_cost})
+                if persisted_generation_ids:
+                    tracer.flush(db_session, persisted_generation_ids[-1])
             except Exception as e:
-                print(f"Error in image upload/save: {e}")
-
+                print(f"Error finalizing session cost: {e}")
+            finally:
+                db_session.close()
 
     except Exception as exc:
         tracer.add("generation_failed", "failed", message=str(exc))
