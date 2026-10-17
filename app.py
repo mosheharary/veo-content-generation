@@ -149,7 +149,13 @@ from veo import (
     IMAGE_CONCURRENCY,
     optimal_panels_per_page,
     extract_last_frame,
+    enhance_image_quality,
+    make_live_video,
+    LIVE_VIDEO_DURATION,
+    LIVE_VIDEO_RESOLUTION,
 )
+
+MAKE_LIVE_STYLE = "make-live"
 
 # ── Page config ─────────────────────────────────────────────────────────────
 
@@ -560,6 +566,7 @@ uploaded_file = st.file_uploader(
 )
 
 movie_name_val = None
+make_live = False
 
 if mode == "Video":
     col1, col2, col3 = st.columns(3)
@@ -586,38 +593,58 @@ if mode == "Video":
         value=False,
         help="Pass reference image directly to Veo without restyling it first.",
     )
-    video_style_options = ["None"] + list(STYLE_DEFINITIONS.keys())
+    video_style_options = ["None", MAKE_LIVE_STYLE] + list(STYLE_DEFINITIONS.keys())
     video_style = col6.selectbox(
         "Style",
         video_style_options,
-        help="Apply a visual style to the video via AI prompt enhancement.",
+        help=(
+            "Apply a visual style to the video via AI prompt enhancement. "
+            f"'{MAKE_LIVE_STYLE}' enhances the uploaded image and animates it into a "
+            f"{LIVE_VIDEO_DURATION}s live photo without changing its content."
+        ),
     )
-    video_style_val = None if video_style == "None" else video_style
-    prompt_only = st.checkbox(
-        "Enhance Prompt Only",
-        value=False,
-        help="Generate and display the enhanced prompt without running video generation.",
-    )
+    make_live = video_style == MAKE_LIVE_STYLE
+    video_style_val = None if video_style == "None" or make_live else video_style
 
-    # Extensions force 720p if video method
-    effective_resolution = (
-        EXTENSION_RESOLUTION if (num_extensions > 0 and extend_method == "video") else resolution
-    )
-
-    duration = 8 if effective_resolution in RESOLUTIONS_REQUIRING_8S else 4
-    ext_cost = (
-        num_extensions
-        * (duration if extend_method == "image" else 7)
-        * VEO_PRICE_PER_SEC.get(
-            effective_resolution if extend_method == "image" else EXTENSION_RESOLUTION, 0.40
+    if make_live:
+        # Make-live ignores the prompt, resolution, aspect ratio and extension settings
+        prompt_only = False
+        effective_resolution = LIVE_VIDEO_RESOLUTION
+        est_cost = LIVE_VIDEO_DURATION * VEO_PRICE_PER_SEC.get(LIVE_VIDEO_RESOLUTION, 0.40)
+        st.info(
+            f"Make Live: enhances the uploaded image, then animates it into a "
+            f"**{LIVE_VIDEO_DURATION}s {LIVE_VIDEO_RESOLUTION}** live video (aspect ratio follows the image). "
+            f"Description, resolution, aspect ratio and extensions are ignored.  |  "
+            f"Estimated cost: **${est_cost:.2f}** + image enhancement"
         )
-    )
-    est_cost = duration * VEO_PRICE_PER_SEC.get(effective_resolution, 0.40) + ext_cost
+        if not uploaded_file:
+            st.warning("Upload a reference image to use the make-live style.")
+    else:
+        prompt_only = st.checkbox(
+            "Enhance Prompt Only",
+            value=False,
+            help="Generate and display the enhanced prompt without running video generation.",
+        )
 
-    info_parts = [f"Initial Duration: **{duration}s**", f"Estimated cost: **${est_cost:.2f}**"]
-    if num_extensions > 0 and extend_method == "video":
-        info_parts.append(f"Resolution forced to **{EXTENSION_RESOLUTION}** for video extensions")
-    st.info("  |  ".join(info_parts))
+        # Extensions force 720p if video method
+        effective_resolution = (
+            EXTENSION_RESOLUTION if (num_extensions > 0 and extend_method == "video") else resolution
+        )
+
+        duration = 8 if effective_resolution in RESOLUTIONS_REQUIRING_8S else 4
+        ext_cost = (
+            num_extensions
+            * (duration if extend_method == "image" else 7)
+            * VEO_PRICE_PER_SEC.get(
+                effective_resolution if extend_method == "image" else EXTENSION_RESOLUTION, 0.40
+            )
+        )
+        est_cost = duration * VEO_PRICE_PER_SEC.get(effective_resolution, 0.40) + ext_cost
+
+        info_parts = [f"Initial Duration: **{duration}s**", f"Estimated cost: **${est_cost:.2f}**"]
+        if num_extensions > 0 and extend_method == "video":
+            info_parts.append(f"Resolution forced to **{EXTENSION_RESOLUTION}** for video extensions")
+        st.info("  |  ".join(info_parts))
 
 else:
     col1, col2, col3 = st.columns(3)
@@ -668,7 +695,12 @@ _celeb_missing = locals().get("style") == "celeb-selfie" and not character_name_
 generate_clicked = st.button(
     "Generate",
     type="primary",
-    disabled=(not prompt.strip() and not uploaded_file) or _bts_missing or _celeb_missing,
+    disabled=(
+        (not prompt.strip() and not uploaded_file)
+        or (make_live and not uploaded_file)
+        or _bts_missing
+        or _celeb_missing
+    ),
     width='stretch',
 )
 
@@ -727,7 +759,7 @@ if _do_generate:
             tmp_image_path = out_dir / f"uploaded{suffix}"
             tmp_image_path.write_bytes(uploaded_file.read())
 
-        if not prompt.strip() and tmp_image_path:
+        if not prompt.strip() and tmp_image_path and not make_live:
             with st.spinner("No prompt provided — auto-describing reference image..."):
                 tracer.add("describe_image", "started")
                 prompt = describe_image(client, tmp_image_path, cost_tracker=cost_tracker)
@@ -792,6 +824,83 @@ if _do_generate:
                 except Exception as _e:
                     print(f"Error in DB save: {_e}")
                 st.session_state["prompt_only_result"] = (_po_label, _po_enhanced)
+
+            elif mode == "Video" and make_live:
+                tracer.add("generation_start", "started", metadata={
+                    "mode": "video",
+                    "style": MAKE_LIVE_STYLE,
+                    "prompt": prompt,
+                    "resolution": LIVE_VIDEO_RESOLUTION,
+                    "duration": LIVE_VIDEO_DURATION,
+                })
+
+                tracer.add("enhance_image", "started")
+                status.write(f"Enhancing image quality with {IMAGE_MODEL}...")
+                enhanced_path, src_width, src_height = enhance_image_quality(
+                    client, tmp_image_path, out_dir, cost_tracker=cost_tracker
+                )
+                tracer.add("enhance_image", "completed",
+                           metadata={"source_size": f"{src_width}x{src_height}"})
+
+                tracer.add("generate_live_video", "started")
+                status.write(
+                    f"Generating {LIVE_VIDEO_DURATION}s live video with {VEO_MODEL} (this may take a few minutes)..."
+                )
+                final_video_path = make_live_video(client, enhanced_path, out_dir, cost_tracker=cost_tracker)
+                tracer.add("generate_live_video", "completed")
+
+                status.update(label="Done!", state="complete")
+
+                st.session_state["video_bytes"] = final_video_path.read_bytes()
+                st.session_state["images"] = [
+                    {"bytes": enhanced_path.read_bytes(), "name": "enhanced_image.png", "ext": ".png"}
+                ]
+                total_cost = cost_tracker.total() if hasattr(cost_tracker, "total") else 0.0
+                st.session_state["cost"] = st.session_state.get("cost", 0.0) + total_cost
+
+                try:
+                    tracer.add("upload_cloudinary", "started")
+                    cloud_url = cloudinary_utils.upload_file_to_cloudinary(final_video_path, resource_type="video")
+                    tracer.add("upload_cloudinary", "completed", metadata={"url": cloud_url})
+
+                    db_session = db.get_session()
+                    try:
+                        user_id = st.session_state.get("user_id")
+                        if user_id:
+                            from datetime import datetime
+                            new_session = db.Session(
+                                user_id=user_id,
+                                session_name=f"Make Live - {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                                total_cost=total_cost,
+                            )
+                            db_session.add(new_session)
+                            db_session.flush()
+
+                            new_gen = db.Generation(
+                                session_id=new_session.id,
+                                gen_type='video',
+                                prompt=prompt or "Make live from uploaded image",
+                                metadata_json={
+                                    "style": MAKE_LIVE_STYLE,
+                                    "resolution": LIVE_VIDEO_RESOLUTION,
+                                    "duration": LIVE_VIDEO_DURATION,
+                                    "source_size": f"{src_width}x{src_height}",
+                                },
+                                media_url=cloud_url,
+                            )
+                            db_session.add(new_gen)
+                            db_session.commit()
+                            tracer.add("save_to_db", "completed",
+                                       metadata={"generation_id": new_gen.id, "total_cost": total_cost})
+                            tracer.add("generation_complete", "completed",
+                                       metadata={"total_cost": total_cost})
+                            tracer.flush(db_session, new_gen.id)
+                    except Exception as e:
+                        print(f"Error saving to DB: {e}")
+                    finally:
+                        db_session.close()
+                except Exception as e:
+                    print(f"Error in upload/save: {e}")
 
             elif mode == "Video":
                 tracer.add("generation_start", "started", metadata={

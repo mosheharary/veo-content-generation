@@ -1915,6 +1915,165 @@ def extend_video_chain(client, initial_video, extension_prompts, output_dir, res
     return current_video
 
 
+# Aspect ratios accepted by IMAGE_MODEL's image_config
+IMAGE_ASPECT_RATIOS = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"]
+
+LIVE_VIDEO_DURATION = 4
+LIVE_VIDEO_RESOLUTION = "720p"  # 4s clips are only supported at 720p
+
+
+def _closest_aspect_ratio(width, height, choices):
+    target = width / height
+    return min(choices, key=lambda r: abs(int(r.split(":")[0]) / int(r.split(":")[1]) - target))
+
+
+def enhance_image_quality(client, image_path, output_dir, cost_tracker=None):
+    """Use IMAGE_MODEL to upscale/restore an image without changing its content."""
+    from io import BytesIO
+    from PIL import Image
+
+    with Image.open(image_path) as im:
+        width, height = im.size
+        buf = BytesIO()
+        im.convert("RGB").save(buf, format="PNG")
+    aspect_ratio = _closest_aspect_ratio(width, height, IMAGE_ASPECT_RATIOS)
+    print(f"   Source: {width}x{height} -> enhancing at aspect ratio {aspect_ratio}")
+
+    response = client.models.generate_content(
+        model=IMAGE_MODEL,
+        contents=[
+            types.Part(
+                text=(
+                    "Enhance the quality of this exact photo: increase sharpness and resolution, "
+                    "remove noise, compression artifacts and blur, and restore fine detail and natural color. "
+                    "This is a restoration task, not a creative edit. Keep the composition, framing, camera angle, "
+                    "every person, face, object, pose, expression, background element, text and color exactly as they are. "
+                    "Do not add, remove, move or restyle anything. "
+                    "FACES ARE LOCKED: every face must stay identical to the original photo. "
+                    "Preserve each person's exact identity, facial features, face shape, skin tone and texture, eyes, "
+                    "eyebrows, nose, lips, teeth, wrinkles, facial hair, makeup and expression. Only reduce noise and "
+                    "blur on faces; never smooth, beautify, age, de-age, re-light, reshape or redraw them."
+                )
+            ),
+            types.Part.from_bytes(data=buf.getvalue(), mime_type="image/png"),
+        ],
+        config=types.GenerateContentConfig(
+            response_modalities=["IMAGE"],
+            image_config=types.ImageConfig(aspect_ratio=aspect_ratio, image_size="2K"),
+        ),
+    )
+
+    if cost_tracker and response.usage_metadata:
+        cost_tracker.add_image(
+            input_tokens=response.usage_metadata.prompt_token_count or 0,
+            output_tokens=response.usage_metadata.candidates_token_count or 0,
+            label="Image enhancement",
+        )
+
+    candidates = response.candidates or []
+    if not candidates:
+        raise RuntimeError(f"Image enhancement returned no candidates (possibly blocked). Feedback: {response.prompt_feedback}")
+    content = candidates[0].content
+    for part in (content.parts if content else []) or []:
+        if part.inline_data:
+            out_path = output_dir / "enhanced_image.png"
+            out_path.write_bytes(part.inline_data.data)
+            return out_path, width, height
+
+    raise RuntimeError(f"Image enhancement produced no image (finish_reason={getattr(candidates[0], 'finish_reason', 'unknown')})")
+
+
+def make_live_video(client, image_path, output_dir, cost_tracker=None):
+    """Animate a still image into a short 'live photo' clip with VEO_MODEL, keeping the scene unchanged."""
+    from PIL import Image
+
+    with Image.open(image_path) as im:
+        width, height = im.size
+    aspect_ratio = "9:16" if height > width else "16:9"
+
+    print(f"\nGenerating live video with {VEO_MODEL}...")
+    print(f"   Duration: {LIVE_VIDEO_DURATION}s | Resolution: {LIVE_VIDEO_RESOLUTION} | Aspect Ratio: {aspect_ratio}")
+
+    prompt = (
+        "Bring this exact photo to life as a subtle 'live photo' (cinemagraph). The camera is mounted on a tripod and "
+        "completely still for the whole clip: no zoom, pan, tilt, dolly, parallax or cut, and the framing never changes. "
+        "The background is frozen exactly as in the photo: same buildings, skyline, sky and scenery, nothing new appears. "
+        "Keep every person, object, pose, clothing and color exactly as in the image. "
+        "FACES ARE LOCKED: every face in the photo must stay pixel-identical to the reference image in every frame. "
+        "Preserve each person's exact identity, facial features, face shape, skin tone and texture, eyes, eyebrows, "
+        "nose, lips, teeth, wrinkles, facial hair, makeup and expression. Faces do not move, blink, talk, smile, "
+        "or change expression, and are never smoothed, beautified, aged, de-aged, re-lit or redrawn. "
+        "Heads stay still, keeping the same angle and position. Only add gentle natural micro-motion away from the "
+        "faces: faint hair or fabric movement, light breeze, drifting haze or light where present. The last frame "
+        "must look nearly identical to the first. Quiet ambient sound only, no speech."
+    )
+    image = types.Image(image_bytes=Path(image_path).read_bytes(), mime_type="image/png")
+    config = types.GenerateVideosConfig(
+        duration_seconds=LIVE_VIDEO_DURATION,
+        resolution=LIVE_VIDEO_RESOLUTION,
+        aspect_ratio=aspect_ratio,
+        number_of_videos=1,
+        negative_prompt=(
+            "camera movement, zoom, pan, tilt, parallax, reframing, scene change, new buildings, new objects, "
+            "new people, objects disappearing, changing background, "
+            "morphing, face distortion, changing identity, altered facial features, different face, face swap, "
+            "facial expression change, blinking, talking, lip movement, smiling, head turning, beautified skin, "
+            "smoothed skin, aging, de-aging, style change, text overlays"
+        ),
+    )
+    operation = client.models.generate_videos(
+        model=VEO_MODEL,
+        prompt=prompt,
+        image=image,
+        config=config,
+    )
+    print(f"   Operation started: {getattr(operation, 'name', operation)}")
+
+    video_file = poll_operation(client, operation, max_wait=MAX_POLL_SECONDS_VIDEO)
+    if cost_tracker:
+        cost_tracker.add_video(LIVE_VIDEO_DURATION, LIVE_VIDEO_RESOLUTION)
+
+    print("   Downloading video...")
+    client.files.download(file=video_file)
+    out_path = output_dir / "live_video.mp4"
+    video_file.save(str(out_path))
+    return out_path
+
+
+def cmd_make_live(client, args):
+    """Enhance an image with IMAGE_MODEL, then animate it into a 4s live video with VEO_MODEL."""
+    image_path = args.make_live
+    if not image_path.exists():
+        print(f"Error: Image not found: {image_path}")
+        sys.exit(1)
+
+    output_dir = Path("outputs") / datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"\n{'=' * 60}")
+    print("VEO 3.1 MAKE LIVE")
+    print(f"{'=' * 60}")
+    print(f"Image: {image_path}")
+    print(f"Output: {output_dir}")
+    print(f"{'=' * 60}")
+
+    cost = CostTracker()
+
+    print(f"\nEnhancing image quality using {IMAGE_MODEL}...")
+    enhanced_path, _, _ = enhance_image_quality(client, image_path, output_dir, cost_tracker=cost)
+    print(f"   Enhanced image saved to: {enhanced_path}")
+
+    video_path = make_live_video(client, enhanced_path, output_dir, cost_tracker=cost)
+
+    print(f"\n{'=' * 60}")
+    print("COMPLETE")
+    print(f"{'=' * 60}")
+    print(f"Enhanced image: {enhanced_path}")
+    print(f"Live video:     {video_path}")
+    print(f"{'=' * 60}")
+    cost.print_summary()
+
+
 def cmd_list(client, args):
     """List all files stored in the Google Files API."""
     files = list(client.files.list())
@@ -1970,6 +2129,10 @@ def cmd_download(client, args):
 
 def cmd_generate(client, args):
     """Generate a video (original generate flow)."""
+    if getattr(args, "make_live", None):
+        cmd_make_live(client, args)
+        return
+
     # Resolve prompt from --prompt or --prompt-file
     if args.prompt_file:
         if not args.prompt_file.exists():
@@ -2280,6 +2443,9 @@ generate options:
                            video by N×7s segments (forces resolution to 720p)
   --image PATH           Reference image: generates a styled image first via
                            Gemini Flash, then passes it to Veo as a reference
+  --make-live PATH       Enhance the image's quality with Gemini Flash, then turn it
+                           into a 4s 720p "live photo" video with Veo (static camera,
+                           subtle motion only, scene content unchanged)
   --image-only           Generate a standalone image (no video): TEXT model
                            creates a detailed JSON prompt, IMAGE model renders it
   --total-images N       With --image-only: generate N storyboard images where
@@ -2324,6 +2490,7 @@ examples:
   python veo.py --prompt "A detective in a dark alley" --image-only --style film-noir
   python veo.py --prompt "A fantasy forest" --image-only --total-images 4 --style studio-ghibli
   python veo.py --prompt "A dancer performing ballet" --aspect-ratio 9:16
+  python veo.py --make-live ./photo.jpg
   python veo.py list
   python veo.py --list
   python veo.py download files/abc123
@@ -2342,6 +2509,8 @@ examples:
     gen.add_argument("--image", type=Path, metavar="PATH", help="Reference image path")
     gen.add_argument("--direct-image", action="store_true",
                      help="Pass the reference image directly to Veo without the intermediate restyle step (better face fidelity)")
+    gen.add_argument("--make-live", type=Path, metavar="PATH",
+                     help="Enhance the image's quality, then animate it into a 4s 'live' video without changing its content")
     gen.add_argument("--image-only", action="store_true", help="Generate a standalone image (no video) from the prompt idea")
     gen.add_argument("--total-images", type=int, metavar="N", help="Generate N images (used with --image-only): first image from text, remaining N-1 from image 1 as reference")
     gen.add_argument(
